@@ -65,7 +65,7 @@ const HTML = /* html */ `<!DOCTYPE html>
 
     /* ── Left sidebar ────────────────────────────────────── */
     #sidebar {
-      width: 290px;
+      width: 360px;
       flex-shrink: 0;
       border-right: 1px solid var(--border);
       display: flex;
