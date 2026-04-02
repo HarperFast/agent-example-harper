@@ -79,23 +79,34 @@ const HTML = /* html */ `<!DOCTYPE html>
     .meta {
       display: flex;
       flex-wrap: wrap;
-      gap: 0.5rem 1rem;
-      margin-top: 0.35rem;
-      padding: 0.35rem 0.6rem;
-      background: rgba(0,0,0,0.04);
+      gap: 0.4rem 1.25rem;
+      margin-top: 0.5rem;
+      padding: 0.5rem 0.875rem;
+      background: #f0f4ff;
+      border: 1px solid #c7d7fa;
       border-radius: 0.5rem;
-      font-size: 0.68rem;
-      color: #6b7280;
+      font-size: 0.7rem;
+      color: #4b5563;
     }
     .meta .pill {
       display: flex;
       align-items: center;
-      gap: 0.2rem;
+      gap: 0.3rem;
       white-space: nowrap;
     }
-    .meta .pill.vector-hit  { color: #059669; font-weight: 500; }
+    .meta .pill .label {
+      font-weight: 600;
+      color: #374151;
+      text-transform: uppercase;
+      font-size: 0.6rem;
+      letter-spacing: 0.04em;
+    }
+    .meta .pill.vector-hit  { color: #059669; }
+    .meta .pill.vector-hit .label { color: #059669; }
     .meta .pill.vector-miss { color: #9ca3af; }
-    .meta .pill.cache-hit   { color: #2563eb; font-weight: 500; }
+    .meta .pill.vector-miss .label { color: #9ca3af; }
+    .meta .pill.cache-hit   { color: #2563eb; }
+    .meta .pill.cache-hit .label { color: #2563eb; }
 
     /* — typing indicator — */
     .typing-wrap { align-self: flex-start; }
@@ -231,22 +242,21 @@ const HTML = /* html */ `<!DOCTYPE html>
     if (vectorContext.cached) {
       // Served entirely from Harper's semantic cache — no LLM call
       div.innerHTML =
-        '<span class="pill">⚡ ' + latency + '</span>' +
-        '<span class="pill cache-hit">💾 served from Harper cache — $0.0000 · 0 tokens</span>'
+        '<span class="pill"><span class="label">Latency</span>' + latency + '</span>' +
+        '<span class="pill cache-hit"><span class="label">Cache</span>Served from Harper semantic cache — $0.00 · 0 tokens</span>'
     } else {
-      const tok     = tokens.input + ' in · ' + tokens.output + ' out'
-      const usd     = '$' + cost.total.toFixed(4)
-      const vectorClass = vectorContext.hit ? 'vector-hit' : 'vector-miss'
-      const vectorIcon  = vectorContext.hit ? '⬡' : '○'
-      const vectorLabel = vectorContext.hit
-        ? vectorContext.count + ' memor' + (vectorContext.count === 1 ? 'y' : 'ies') + ' from Harper vector index'
-        : 'no vector context — LLM knowledge only'
+      const tok      = tokens.input + ' in / ' + tokens.output + ' out'
+      const usd      = '$' + cost.total.toFixed(4)
+      const vecClass = vectorContext.hit ? 'vector-hit' : 'vector-miss'
+      const vecLabel = vectorContext.hit
+        ? vectorContext.count + ' memor' + (vectorContext.count === 1 ? 'y' : 'ies') + ' recalled from Harper'
+        : 'No vector context — LLM knowledge only'
 
       div.innerHTML =
-        '<span class="pill">⚡ ' + latency + '</span>' +
-        '<span class="pill">📊 ' + tok + '</span>' +
-        '<span class="pill">💰 ' + usd + '</span>' +
-        '<span class="pill ' + vectorClass + '">' + vectorIcon + ' ' + vectorLabel + '</span>'
+        '<span class="pill"><span class="label">Latency</span>' + latency + '</span>' +
+        '<span class="pill"><span class="label">Tokens</span>' + tok + '</span>' +
+        '<span class="pill"><span class="label">Cost</span>' + usd + '</span>' +
+        '<span class="pill ' + vecClass + '"><span class="label">Vector</span>' + vecLabel + '</span>'
     }
 
     return div

@@ -15,9 +15,34 @@ naturally — don't mention that you're reading stored memories unless the user 
 const COST_INPUT_PER_TOKEN  = 3  / 1_000_000  // $3  / 1M input tokens
 const COST_OUTPUT_PER_TOKEN = 15 / 1_000_000  // $15 / 1M output tokens
 
-// Normalize text for cache comparison — lowercase, collapse whitespace, strip punctuation
+// Normalize text for exact cache comparison
 const normalize = (s) =>
   s.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim()
+
+// Cosine similarity between two embedding vectors (1.0 = identical, 0.0 = unrelated)
+function cosineSimilarity(a, b) {
+  if (!a || !b || a.length !== b.length) return 0
+  let dot = 0, normA = 0, normB = 0
+  for (let i = 0; i < a.length; i++) {
+    dot   += a[i] * b[i]
+    normA += a[i] * a[i]
+    normB += b[i] * b[i]
+  }
+  const denom = Math.sqrt(normA) * Math.sqrt(normB)
+  return denom === 0 ? 0 : dot / denom
+}
+
+// Similarity threshold for semantic cache hits (0–1). Questions above this score
+// are considered "the same question" and served from Harper without calling Claude.
+const CACHE_THRESHOLD = 0.88
+
+// Fetch the embedding for a stored message directly from Harper by primary key.
+// Harper's search() results don't include the raw float array, but a direct
+// record lookup does — giving us persistent embeddings that survive restarts.
+async function getEmbedding(msgId) {
+  const record = await tables.Message.get(msgId)
+  return record?.embedding ?? null
+}
 
 export class Agent extends Resource {
   static loadAsInstance = false
@@ -35,37 +60,7 @@ export class Agent extends Resource {
     // 1. Embed first — before any DB writes to avoid holding transactions open
     const userEmbedding = await embed(message)
 
-    // 2. Semantic cache check — search BEFORE storing the current message so we
-    //    don't match ourselves. If the top vector results contain an identical
-    //    user question, return the stored answer instantly without calling Claude.
-    let cachedAnswer = null
-    const topSimilar = []
-    const cacheSearch = tables.Message.search({
-      sort: { attribute: 'embedding', target: userEmbedding },
-      limit: 10,
-    })
-    for await (const msg of cacheSearch) topSimilar.push(msg)
-
-    const cacheMatch = topSimilar.find(
-      (msg) => msg.role === 'user' && msg.content &&
-               normalize(msg.content) === normalize(message)
-    )
-
-    if (cacheMatch) {
-      // Load the conversation that contained this question and find the
-      // assistant reply that immediately followed it.
-      const convMsgs = []
-      const convSearch = tables.Message.search({
-        conditions: [{ attribute: 'conversationId', value: cacheMatch.conversationId }],
-        limit: 100,
-      })
-      for await (const m of convSearch) convMsgs.push(m)
-      convMsgs.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-      const idx = convMsgs.findIndex((m) => m.id === cacheMatch.id)
-      cachedAnswer = convMsgs.slice(idx + 1).find((m) => m.role === 'assistant') ?? null
-    }
-
-    // 3. Create or reuse a conversation
+    // 2. Create or reuse a conversation
     const conversationId = existingId || crypto.randomUUID()
     if (!existingId) {
       await tables.Conversation.put({
@@ -76,9 +71,10 @@ export class Agent extends Resource {
       })
     }
 
-    // 4. Store the user message (always, even on cache hits — keeps history intact)
+    // 3. Store the user message with its embedding
+    const userMsgId = crypto.randomUUID()
     await tables.Message.put({
-      id: crypto.randomUUID(),
+      id: userMsgId,
       conversationId,
       role: 'user',
       content: message,
@@ -86,11 +82,89 @@ export class Agent extends Resource {
       createdAt: new Date().toISOString(),
     })
 
-    // 5. Return from semantic cache if we have a hit — zero LLM cost
-    if (cachedAnswer) {
+    // 4. Vector search for relevant messages across all conversations
+    //    (used for semantic context AND semantic cache — keep embedding field for similarity calc)
+    const relevant = []
+    const searchResults = tables.Message.search({
+      sort: { attribute: 'embedding', target: userEmbedding },
+      limit: 10,
+    })
+    for await (const msg of searchResults) {
+      if (msg.content && msg.id !== userMsgId) {
+        relevant.push(msg) // msg.embedding is kept for cosine similarity below
+      }
+    }
+
+    // 5. Load full conversation history (includes current user message)
+    const recent = []
+    const history = tables.Message.search({
+      conditions: [{ attribute: 'conversationId', value: conversationId }],
+      limit: 100,
+    })
+    for await (const msg of history) {
+      recent.push({ id: msg.id, role: msg.role, content: msg.content, createdAt: msg.createdAt })
+    }
+    recent.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+
+    // 6. Semantic cache check
+    //
+    //    First: look in this conversation's history for an identical prior question.
+    //    This is the most reliable path — no extra DB round-trip needed.
+    let cachedReply = null
+
+    const prevSame = recent.find(
+      (m) => m.id !== userMsgId &&
+             m.role === 'user' &&
+             m.content &&
+             normalize(m.content) === normalize(message)
+    )
+    if (prevSame) {
+      const pIdx = recent.indexOf(prevSame)
+      cachedReply = recent.slice(pIdx + 1).find((m) => m.role === 'assistant') ?? null
+    }
+
+    // Second: semantic similarity check across all conversations.
+    // If any user message in the vector results scores above the threshold
+    // (meaning it's asking essentially the same thing), serve its answer from cache.
+    if (!cachedReply) {
+      // Fetch embeddings from Harper by primary key and compute cosine similarity.
+      // These are persistent — works correctly after restarts.
+      const scoredMatches = (
+        await Promise.all(
+          relevant
+            .filter((m) => m.role === 'user')
+            .map(async (m) => {
+              const emb = await getEmbedding(m.id)
+              return { msg: m, sim: cosineSimilarity(userEmbedding, emb) }
+            })
+        )
+      )
+        .filter(({ sim }) => sim >= CACHE_THRESHOLD)
+        .sort((a, b) => b.sim - a.sim)
+
+      for (const { msg: match } of scoredMatches) {
+        // Find the assistant reply that followed this question in its conversation
+        const matchConvMsgs = []
+        const matchHistory = tables.Message.search({
+          conditions: [{ attribute: 'conversationId', value: match.conversationId }],
+          limit: 100,
+        })
+        for await (const m of matchHistory) matchConvMsgs.push(m)
+        matchConvMsgs.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+        const midx = matchConvMsgs.findIndex((m) => m.id === match.id)
+        const reply = matchConvMsgs.slice(midx + 1).find((m) => m.role === 'assistant')
+        if (reply) {
+          cachedReply = reply
+          break
+        }
+      }
+    }
+
+    // Return the cached answer — zero LLM cost
+    if (cachedReply) {
       return {
         conversationId,
-        message: { role: 'assistant', content: cachedAnswer.content },
+        message: { role: 'assistant', content: cachedReply.content },
         meta: {
           latencyMs: Date.now() - startTime,
           tokens: { input: 0, output: 0, total: 0 },
@@ -100,37 +174,19 @@ export class Agent extends Resource {
       }
     }
 
-    // 6. Semantic recall — find relevant messages across all conversations
-    const relevant = []
-    const searchResults = tables.Message.search({
-      sort: { attribute: 'embedding', target: userEmbedding },
-      limit: 5,
-    })
-    for await (const msg of searchResults) {
-      if (msg.content) relevant.push(msg)
-    }
-
-    // 7. Load recent messages from this conversation
-    const recent = []
-    const history = tables.Message.search({
-      conditions: [{ attribute: 'conversationId', value: conversationId }],
-      limit: 50,
-    })
-    for await (const msg of history) {
-      recent.push({ role: msg.role, content: msg.content, createdAt: msg.createdAt })
-    }
-    recent.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-
-    // 8. Build the prompt with semantic context
+    // 7. Build the prompt with semantic context (top 5 relevant messages)
+    const context = relevant.slice(0, 5)
     let systemPrompt = SYSTEM_PROMPT
-    if (relevant.length > 0) {
-      const memories = relevant.map((m) => `[${m.role}]: ${m.content}`).join('\n')
-      systemPrompt += `\n\nRelevant context from memory:\n${memories}`
+    if (context.length > 0) {
+      systemPrompt += '\n\nRelevant context from memory:\n' +
+        context.map((m) => `[${m.role}]: ${m.content}`).join('\n')
     }
 
-    // 9. Call Claude
+    // 8. Call Claude — exclude the current user message from history (it's the last turn)
     const messages = [
-      ...recent.map(({ role, content }) => ({ role, content })),
+      ...recent
+        .filter((m) => m.id !== userMsgId)
+        .map(({ role, content }) => ({ role, content })),
       { role: 'user', content: message },
     ]
     const response = await getClient().messages.create({
@@ -144,10 +200,11 @@ export class Agent extends Resource {
     const assistantContent = response.content[0].text
     const { input_tokens, output_tokens } = response.usage
 
-    // 10. Store the assistant's response with its embedding
+    // 9. Store the assistant's response with its embedding
+    const assistantMsgId = crypto.randomUUID()
     const assistantEmbedding = await embed(assistantContent)
     await tables.Message.put({
-      id: crypto.randomUUID(),
+      id: assistantMsgId,
       conversationId,
       role: 'assistant',
       content: assistantContent,
@@ -155,7 +212,7 @@ export class Agent extends Resource {
       createdAt: new Date().toISOString(),
     })
 
-    // 11. Update conversation timestamp
+    // 10. Update conversation timestamp
     await tables.Conversation.put({
       id: conversationId,
       updatedAt: new Date().toISOString(),
@@ -176,7 +233,7 @@ export class Agent extends Resource {
           output: +(output_tokens * COST_OUTPUT_PER_TOKEN).toFixed(6),
           total:  +((input_tokens * COST_INPUT_PER_TOKEN) + (output_tokens * COST_OUTPUT_PER_TOKEN)).toFixed(6),
         },
-        vectorContext: { hit: relevant.length > 0, count: relevant.length, cached: false },
+        vectorContext: { hit: context.length > 0, count: context.length, cached: false },
       },
     }
   }
