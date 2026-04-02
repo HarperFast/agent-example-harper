@@ -295,6 +295,6 @@ export class Stats extends Resource {
 
   async get(target) {
     target.checkPermission = false
-    return tables.Stats.get('global')
+    return await tables.Stats.get('global') ?? { id: 'global', totalSaved: 0, cacheHits: 0 }
   }
 }
