@@ -1,31 +1,90 @@
-# Agent Example: Conversational AI on Harper
+# Harper Demo Agent
 
-A conversational AI agent with persistent semantic memory, built on [Harper](https://harper.fast) and [Claude](https://anthropic.com).
+A conversational AI agent with persistent semantic memory, a two-layer semantic cache, web search, cost tracking, and a browser chat UI — all running on [Harper](https://harper.fast) with Claude.
 
-One GraphQL schema defines the database. One JavaScript file implements the agent. One command deploys it globally.
+Live demo: **[agent-example.stephen-demo-org.harperfabric.com/Chat](https://agent-example.stephen-demo-org.harperfabric.com/Chat)**
 
 ## What It Does
 
-- **Chat with Claude** via a single REST endpoint (`POST /Agent`)
-- **Remember everything** — every message is embedded and stored in Harper
-- **Semantic recall** — vector search surfaces relevant context from past conversations automatically
-- **Conversation history** — full CRUD on conversations and messages via auto-generated REST APIs
-- **Local embeddings** — uses [`harper-fabric-embeddings`](https://github.com/heskew/harper-fabric-embeddings) (llama.cpp + bge-small-en-v1.5), no embedding API key required
+- **Chat with Claude** via a REST endpoint (`POST /Agent`) or the built-in browser chat UI (`GET /Chat`)
+- **Semantic cache** — two-layer cache catches repeated and rephrased questions before they reach Claude, returning answers instantly at zero LLM cost
+- **Web search** — Anthropic's built-in server-side web search (`web_search_20250305`, up to 5 uses per turn); no external API key required
+- **Persistent memory** — every message is embedded and stored in Harper; semantic recall surfaces relevant context from past conversations automatically
+- **Local embeddings** — `bge-small-en-v1.5` runs via `harper-fabric-embeddings` (llama.cpp wrapper), entirely in-process; no embedding API key or billing
+- **Per-response metadata** — every API response includes latency, token counts, cost breakdown, web searches used, and vector context stats
+- **Global savings tracker** — cache hits accumulate a running total of USD saved and hit count in a `Stats` table, displayed live in the chat sidebar
+- **Auto-generated REST APIs** — full CRUD on `Conversation`, `Message`, and `Stats` tables, generated from the GraphQL schema with zero route code
 
 ## Architecture
 
 ```
-POST /Agent { message, conversationId? }
-     │
-     ├─ Store user message + embedding in Harper (local llama.cpp)
-     ├─ Vector search for relevant past messages (HNSW)
-     ├─ Load recent conversation history
-     ├─ Call Claude with context
-     ├─ Store assistant response + embedding
-     └─ Return response
+                          ┌─────────────────────────────────────────────┐
+                          │                   Harper                    │
+                          │                                             │
+User Query ──────────────►│  Harper Agent (resources/Agent.js)          │
+                          │       │                                     │
+                          │       ├─ Layer 1: Exact match cache         │
+                          │       │  (normalize + compare in history)   │
+                          │       │                                     │
+                          │       ├─ Layer 2: HNSW vector cache         │
+                          │       │  (cosine distance < 0.12)           │
+                          │       │                  │                  │
+                          │       │            Cache HIT ───────────────┼──► Free instant reply
+                          │       │                                     │
+                          │       ├─ HNSW sort search (top 10)         │
+                          │       │  → semantic context for LLM        │
+                          │       │                                     │
+                          │  Local SLM (bge-small-en-v1.5 via          │
+                          │  harper-fabric-embeddings / llama.cpp)      │
+                          │       │                                     │
+                          └───────┼─────────────────────────────────────┘
+                                  │ Cache MISS
+                                  ▼
+                         Claude Sonnet (Anthropic)
+                         + web_search_20250305
+                                  │
+                          ┌───────▼─────────────────────────────────────┐
+                          │  Embed response → store in Harper           │
+                          │  (vector index for future cache hits)       │
+                          └─────────────────────────────────────────────┘
 ```
 
-**No separate database. No separate cache. No separate vector store. No separate API server. No embedding API.** Harper handles the first four; `harper-fabric-embeddings` runs `bge-small-en-v1.5` locally (24 MB, one-time download).
+## How the Semantic Cache Works
+
+The cache has two layers, checked in order before every Claude call:
+
+**Layer 1 — Exact match:** Normalize both strings (lowercase, strip punctuation, collapse whitespace) and look for an identical prior user message in the current conversation's loaded history. No extra DB round-trip.
+
+**Layer 2 — HNSW vector similarity:** Use Harper's native vector index with a distance threshold:
+
+```javascript
+tables.Message.search({
+  conditions: {
+    attribute: 'embedding',
+    comparator: 'lt',
+    value: 0.12,           // cosine distance < 0.12 ≡ cosine similarity ≥ 0.88
+    target: userEmbedding,
+  },
+  limit: 10,
+})
+```
+
+Harper's HNSW index evaluates the distance threshold internally — no full table scan, no in-memory cosine math. The result is only messages that are genuinely similar to the query. When a match is found, the agent looks up the assistant reply that followed it in the original conversation and returns that directly.
+
+Cache hits return `cost.total: 0` and include a `cost.saved` field showing what the call would have cost. The saved amount is added to the global `Stats` record (`totalSaved`, `cacheHits`).
+
+## How the Vector Context Works
+
+On every cache miss, the agent runs a second HNSW search to build LLM context:
+
+```javascript
+tables.Message.search({
+  sort: { attribute: 'embedding', target: userEmbedding },
+  limit: 10,
+})
+```
+
+This uses Harper's HNSW sort (nearest-neighbor ranking) rather than a threshold filter — it returns the top 10 most semantically similar messages across all conversations, ordered by closeness. The top 5 are injected into Claude's system prompt as background context, enabling cross-conversation recall without any explicit memory management.
 
 ## Prerequisites
 
@@ -33,13 +92,13 @@ POST /Agent { message, conversationId? }
 - [Harper CLI](https://www.npmjs.com/package/harperdb): `npm install -g harperdb`
 - [Anthropic API key](https://console.anthropic.com/)
 
-That's it — embeddings run locally, no extra API key needed.
+No embedding API key needed — embeddings run in-process.
 
 ## Quick Start
 
 ```bash
 # Clone the repo
-git clone https://github.com/HarperFast/agent-example-harper.git
+git clone https://github.com/stephengoldberg/agent-example-harper.git
 cd agent-example-harper
 
 # Install dependencies
@@ -55,16 +114,38 @@ npm run dev
 
 > **First run:** On startup, `bge-small-en-v1.5` (~24 MB) is auto-downloaded into `./models/`. This only happens once.
 
-The server starts at `http://localhost:9926`.
+The server starts at `http://localhost:9926`. Open `http://localhost:9926/Chat` in your browser.
 
 ## Usage
 
-**Start a new conversation:**
+**Open the chat UI:**
+
+```
+http://localhost:9926/Chat
+```
+
+**Send a message via API:**
 
 ```bash
 curl -X POST http://localhost:9926/Agent \
   -H "Content-Type: application/json" \
   -d '{"message": "What is Harper?"}'
+```
+
+Response:
+
+```json
+{
+  "conversationId": "abc-123",
+  "message": { "role": "assistant", "content": "Harper is..." },
+  "meta": {
+    "latencyMs": 1842,
+    "tokens": { "input": 312, "output": 148, "total": 460 },
+    "cost": { "input": 0.000936, "output": 0.00222, "search": 0, "total": 0.003156 },
+    "webSearches": 0,
+    "vectorContext": { "hit": false, "count": 0, "cached": false }
+  }
+}
 ```
 
 **Continue a conversation:**
@@ -73,42 +154,48 @@ curl -X POST http://localhost:9926/Agent \
 curl -X POST http://localhost:9926/Agent \
   -H "Content-Type: application/json" \
   -d '{
-    "conversationId": "your-conversation-id",
+    "conversationId": "abc-123",
     "message": "Tell me more about its vector search"
   }'
 ```
 
-**List conversations** (auto-generated from schema):
+**Ask the same question again (cache hit — free and instant):**
 
 ```bash
+curl -X POST http://localhost:9926/Agent \
+  -H "Content-Type: application/json" \
+  -d '{"message": "What is Harper?"}'
+
+# meta.cost.total = 0, meta.cost.saved = 0.003156
+```
+
+**Check global savings:**
+
+```bash
+curl http://localhost:9926/PublicStats/global
+# { "id": "global", "totalSaved": 0.003156, "cacheHits": 1, "updatedAt": "..." }
+```
+
+**Auto-generated CRUD** (from schema, no route code written):
+
+```bash
+# List all conversations
 curl http://localhost:9926/Conversation
+
+# Get messages for a conversation
+curl "http://localhost:9926/Message?conversationId=abc-123"
 ```
-
-**Get messages for a conversation** (auto-generated from schema):
-
-```bash
-curl "http://localhost:9926/Message?conversationId=your-id"
-```
-
-## Deploy to Harper Fabric
-
-```bash
-# 1. Create a cluster at https://fabric.harper.fast/
-# 2. Add your Fabric credentials to .env (see .env.example)
-# 3. Deploy
-npm run deploy
-```
-
-That's it. Your agent is now running globally on Harper Fabric.
 
 ## Project Structure
 
 ```
-├── config.yaml              # Harper app configuration
+├── config.yaml              # Harper app configuration (6 lines)
 ├── schemas/
-│   └── schema.graphql       # Database schema (conversations + messages + vector index)
+│   └── schema.graphql       # Database schema (Conversation, Message, Stats + HNSW index)
 ├── resources/
-│   └── Agent.js             # The agent endpoint (~100 lines)
+│   ├── Agent.js             # POST /Agent (agent loop + semantic cache + web search)
+│   │                        # GET  /PublicStats/:id (public stats endpoint)
+│   └── Chat.js              # GET  /Chat (full browser chat UI served as HTML)
 ├── lib/
 │   ├── config.js            # Environment variable helpers
 │   └── embeddings.js        # Local llama.cpp embeddings via harper-fabric-embeddings
@@ -117,16 +204,72 @@ That's it. Your agent is now running globally on Harper Fabric.
 └── package.json
 ```
 
-## Why Harper for Agents?
+## Schema
+
+```graphql
+type Conversation @table @export {
+  id: ID @primaryKey
+  title: String
+  createdAt: String
+  updatedAt: String
+}
+
+type Message @table @export {
+  id: ID @primaryKey
+  conversationId: String @indexed
+  role: String
+  content: String
+  cost: Float
+  embedding: [Float] @indexed(type: "HNSW", distance: "cosine")
+  createdAt: String
+}
+
+type Stats @table @export {
+  id: ID @primaryKey
+  totalSaved: Float
+  cacheHits: Int
+  updatedAt: String
+}
+```
+
+`@table` creates the database table. `@export` generates the full REST CRUD API. `@indexed(type: "HNSW", distance: "cosine")` adds the HNSW vector index used for both semantic cache lookup and context retrieval.
+
+## Deploying to Harper Fabric
+
+```bash
+# 1. Create a cluster at https://fabric.harper.fast/
+# 2. Add credentials to .env
+CLI_TARGET=https://your-instance.your-org.harperfabric.com:9925/
+CLI_TARGET_USERNAME=your-username
+CLI_TARGET_PASSWORD=your-password
+
+# 3. Deploy
+npm run deploy
+```
+
+Rolling restarts and replication are handled automatically.
+
+**Public access note:** To make endpoints accessible without authentication, set `target.checkPermission = false` inside the handler method. This is the V2 Resource API pattern (`loadAsInstance = false`). The V1 method `allowRead()` is ignored in V2 Resources and has no effect.
+
+## Why Harper for AI Agents
 
 | Concern | Traditional Stack | Harper |
 |---|---|---|
-| Database | Postgres/MongoDB | Built in |
-| Vector search | Pinecone/Weaviate | Built in (HNSW) |
-| API server | Express/Fastify | Auto-generated from schema |
-| Caching | Redis | Built in (sub-ms) |
-| Embeddings | Voyage/OpenAI API | Local via `harper-fabric-embeddings` (bge-small, 24 MB) |
+| Database | Postgres / MongoDB | Built in |
+| Vector search | Pinecone / Weaviate | Built in (HNSW — one schema directive) |
+| Semantic cache | Redis + custom logic | Built in (native HNSW threshold filter) |
+| API server | Express / Fastify | Auto-generated from schema |
+| Chat UI server | Vite / Next.js | Resource returning `Response(html)` |
+| Embeddings | Voyage / OpenAI API | Local via `harper-fabric-embeddings` (24 MB, in-process) |
 | Deployment | Docker + K8s + cloud | `harperdb deploy .` |
+
+**Key insights from building this:**
+
+- **Native HNSW conditions search scales.** Passing `comparator: 'lt'` to Harper's vector search evaluates the distance threshold inside the index. No JS cosine math, no full scans.
+- **Everything in one process means no network hops.** Database, vector index, cache, API, and agent code share the same runtime. No Redis round-trip, no vector DB round-trip.
+- **The schema is the only config you need.** One `@indexed(type: "HNSW", distance: "cosine")` directive creates the vector index. One `@export` generates the CRUD API. One `@indexed` on `conversationId` creates the secondary index.
+- **Resources can return anything.** A `Resource` subclass can return a `Response` with any content type — JSON, HTML, plain text. The chat UI lives in the same project and deploy as the agent logic.
+- **Local embeddings eliminate a cost center.** `bge-small-en-v1.5` runs in-process via llama.cpp. No per-embedding billing, no embedding service SLA to worry about.
 
 ## License
 
