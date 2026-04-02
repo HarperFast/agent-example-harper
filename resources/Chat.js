@@ -233,13 +233,16 @@ const HTML = /* html */ `<!DOCTYPE html>
     <div id="diagram-section">
       <div class="panel-label">Architecture</div>
       <div id="diagram">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 296" style="font-family:Ubuntu,sans-serif;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 430" style="font-family:Ubuntu,sans-serif;">
           <defs>
             <marker id="ah" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
               <path d="M0,0 L0,7 L7,3.5 z" fill="rgba(255,255,255,0.22)"/>
             </marker>
             <marker id="ah-g" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
               <path d="M0,0 L0,7 L7,3.5 z" fill="#66ffcc"/>
+            </marker>
+            <marker id="ah-d" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
+              <path d="M0,0 L0,7 L7,3.5 z" fill="rgba(167,139,250,0.8)"/>
             </marker>
           </defs>
 
@@ -250,53 +253,65 @@ const HTML = /* html */ `<!DOCTYPE html>
           <!-- Arrow: User → Harper -->
           <line x1="130" y1="32" x2="130" y2="50" stroke="rgba(255,255,255,0.22)" stroke-width="1.5" marker-end="url(#ah)"/>
 
-          <!-- Harper container -->
-          <rect x="4" y="52" width="252" height="96" rx="7" fill="rgba(102,255,204,0.04)" stroke="#66ffcc" stroke-width="1.5"/>
-          <text x="130" y="68" text-anchor="middle" fill="#66ffcc" font-size="9" font-weight="700" letter-spacing="0.1em">HARPER</text>
+          <!-- HARPER outer container — Agent + DB + SLM all live here -->
+          <rect x="4" y="52" width="252" height="298" rx="7" fill="rgba(102,255,204,0.04)" stroke="#66ffcc" stroke-width="1.5"/>
+          <text x="130" y="67" text-anchor="middle" fill="#66ffcc" font-size="9" font-weight="700" letter-spacing="0.1em">HARPER</text>
+
+          <!-- Harper Agent box (inside Harper) -->
+          <rect x="12" y="72" width="232" height="34" rx="5" fill="rgba(102,255,204,0.09)" stroke="#66ffcc" stroke-width="1"/>
+          <text x="128" y="87" text-anchor="middle" fill="#66ffcc" font-size="10" font-weight="600">Harper Agent</text>
+          <text x="128" y="99" text-anchor="middle" fill="rgba(102,255,204,0.55)" font-size="8">JS Resource · runs in-process</text>
+
+          <!-- Arrow: Agent → Vector/Cache -->
+          <line x1="128" y1="106" x2="128" y2="120" stroke="rgba(255,255,255,0.22)" stroke-width="1.5" marker-end="url(#ah)"/>
 
           <!-- Vector Store (inside Harper) -->
-          <rect x="12" y="74" width="110" height="64" rx="5" fill="#2a2d30" stroke="rgba(102,255,204,0.28)" stroke-width="1"/>
-          
-          <text x="67" y="92" text-anchor="middle" fill="#f5f5f5" font-size="10" font-weight="500">Vector Store</text>
-          <text x="67" y="107" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">HNSW Index</text>
-          <text x="67" y="120" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">semantic context</text>
-          <text x="67" y="131" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">for responses</text>
+          <rect x="12" y="122" width="108" height="66" rx="5" fill="#2a2d30" stroke="rgba(102,255,204,0.28)" stroke-width="1"/>
+          <text x="66" y="140" text-anchor="middle" fill="#f5f5f5" font-size="10" font-weight="500">Vector Store</text>
+          <text x="66" y="154" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">HNSW Index</text>
+          <text x="66" y="167" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">semantic context</text>
+          <text x="66" y="180" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">for responses</text>
 
           <!-- Semantic Cache (inside Harper) -->
-          <rect x="138" y="74" width="110" height="64" rx="5" fill="#2a2d30" stroke="rgba(102,255,204,0.28)" stroke-width="1"/>
-          <text x="193" y="92" text-anchor="middle" fill="#f5f5f5" font-size="10" font-weight="500">Semantic Cache</text>
-          <text x="193" y="107" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">cosine sim &gt;= 0.88</text>
-          <text x="193" y="120" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">instant answers</text>
-          <text x="193" y="131" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">$0 LLM cost</text>
+          <rect x="138" y="122" width="110" height="66" rx="5" fill="#2a2d30" stroke="rgba(102,255,204,0.28)" stroke-width="1"/>
+          <text x="193" y="140" text-anchor="middle" fill="#f5f5f5" font-size="10" font-weight="500">Semantic Cache</text>
+          <text x="193" y="154" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">cosine sim &gt;= 0.88</text>
+          <text x="193" y="167" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">instant answers</text>
+          <text x="193" y="180" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">$0 LLM cost</text>
 
-          <!-- Arrows from Harper bottom (split) -->
-          <!-- Cache miss: left -->
-          <line x1="67" y1="148" x2="67" y2="170" stroke="rgba(255,255,255,0.22)" stroke-width="1.5" marker-end="url(#ah)"/>
-          <text x="67" y="163" text-anchor="middle" fill="rgba(255,255,255,0.28)" font-size="8" dx="-28">cache miss</text>
+          <!-- Cache miss arrow (left, exits Harper) -->
+          <line x1="66" y1="188" x2="66" y2="204" stroke="rgba(255,255,255,0.22)" stroke-width="1.5" marker-end="url(#ah)"/>
+          <text x="46" y="200" text-anchor="middle" fill="rgba(255,255,255,0.28)" font-size="8">miss</text>
 
-          <!-- Cache hit: right (green) -->
-          <line x1="193" y1="148" x2="193" y2="170" stroke="#66ffcc" stroke-width="1.5" marker-end="url(#ah-g)"/>
-          <text x="193" y="163" text-anchor="middle" fill="#66ffcc" font-size="8" dx="24" opacity="0.75">cache hit</text>
+          <!-- Cache hit arrow (right, stays in Harper) -->
+          <line x1="193" y1="188" x2="193" y2="204" stroke="#66ffcc" stroke-width="1.5" marker-end="url(#ah-g)"/>
+          <text x="214" y="200" text-anchor="middle" fill="#66ffcc" font-size="8" opacity="0.75">hit</text>
 
-          <!-- Claude box -->
-          <rect x="4" y="172" width="126" height="56" rx="6" fill="#312556" stroke="#7a3a87" stroke-width="1"/>
-          <text x="67" y="191" text-anchor="middle" fill="#f5f5f5" font-size="10" font-weight="500">Claude Sonnet</text>
-          <text x="67" y="206" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-size="8.5">Web Search built-in</text>
-          <text x="67" y="220" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-size="8.5">Anthropic API</text>
+          <!-- Cache Response box (inside Harper) -->
+          <rect x="138" y="206" width="110" height="48" rx="5" fill="rgba(102,255,204,0.07)" stroke="#66ffcc" stroke-width="1.5"/>
+          <text x="193" y="224" text-anchor="middle" fill="#66ffcc" font-size="10" font-weight="600">Harper Cache</text>
+          <text x="193" y="238" text-anchor="middle" fill="#66ffcc" font-size="10" font-weight="600">Response</text>
+          <text x="193" y="249" text-anchor="middle" fill="rgba(102,255,204,0.55)" font-size="8">$0.00 &bull; &lt;50ms</text>
 
-          <!-- Cache response box -->
-          <rect x="138" y="172" width="118" height="56" rx="6" fill="rgba(102,255,204,0.07)" stroke="#66ffcc" stroke-width="1.5"/>
-          <text x="197" y="191" text-anchor="middle" fill="#66ffcc" font-size="10" font-weight="600">Harper Cache</text>
-          <text x="197" y="206" text-anchor="middle" fill="#66ffcc" font-size="10" font-weight="600">Response</text>
-          <text x="197" y="220" text-anchor="middle" fill="rgba(102,255,204,0.6)" font-size="8.5">$0.00 &bull; &lt;50ms</text>
+          <!-- Local SLM box (inside Harper) -->
+          <rect x="12" y="268" width="232" height="40" rx="5" fill="#2a2d30" stroke="rgba(167,139,250,0.5)" stroke-width="1"/>
+          <text x="128" y="284" text-anchor="middle" fill="#a78bfa" font-size="10" font-weight="600">Local SLM · bge-small-en-v1.5</text>
+          <text x="128" y="297" text-anchor="middle" fill="rgba(167,139,250,0.55)" font-size="8.5">embeddings run in Harper · no API cost</text>
 
-          <!-- Arrow: Claude → Embed -->
-          <line x1="67" y1="228" x2="67" y2="254" stroke="rgba(255,255,255,0.22)" stroke-width="1.5" marker-end="url(#ah)"/>
+          <!-- Harper box ends at y=350 -->
 
-          <!-- Embed & Store box -->
-          <rect x="4" y="256" width="126" height="34" rx="6" fill="#383d40" stroke="#66ffcc" stroke-width="1.5"/>
-          <text x="67" y="270" text-anchor="middle" fill="#66ffcc" font-size="10" font-weight="600">Embed &amp; Store</text>
-          <text x="67" y="283" text-anchor="middle" fill="#66ffcc" font-size="10" font-weight="600">result in Harper</text>
+          <!-- Arrow: cache miss exits Harper → Claude (outside) -->
+          <line x1="66" y1="206" x2="66" y2="370" stroke="rgba(255,255,255,0.22)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+          <!-- Claude Sonnet box (EXTERNAL — below Harper) -->
+          <rect x="4" y="372" width="252" height="50" rx="6" fill="#312556" stroke="#7a3a87" stroke-width="1"/>
+          <text x="9" y="386" fill="rgba(255,255,255,0.3)" font-size="7" font-weight="500" font-style="italic">external</text>
+          <text x="128" y="390" text-anchor="middle" fill="#f5f5f5" font-size="10" font-weight="500">Claude Sonnet · Web Search</text>
+          <text x="128" y="404" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-size="8.5">Anthropic API · response embedded by local SLM</text>
+
+          <!-- Arrow: Claude → SLM in Harper -->
+          <line x1="128" y1="352" x2="128" y2="372" stroke="rgba(167,139,250,0.7)" stroke-width="1.5" marker-end="url(#ah-d)"/>
+          <text x="128" y="364" text-anchor="middle" fill="rgba(167,139,250,0.5)" font-size="7.5">embed &amp; store in Harper</text>
         </svg>
       </div>
     </div>
