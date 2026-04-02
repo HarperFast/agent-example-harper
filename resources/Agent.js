@@ -166,13 +166,26 @@ export class Agent extends Resource {
 
     // Return the cached answer — zero LLM cost
     if (cachedReply) {
+      // Look up original response cost and accumulate global savings
+      let savedCost = 0
+      try {
+        const origMsg = await tables.Message.get(cachedReply.id)
+        savedCost = origMsg?.cost ?? 0
+        const stats = await tables.Stats.get('global')
+        await tables.Stats.put({
+          id: 'global',
+          totalSaved: ((stats?.totalSaved) ?? 0) + savedCost,
+          cacheHits:  ((stats?.cacheHits)  ?? 0) + 1,
+          updatedAt:  new Date().toISOString(),
+        })
+      } catch {}
       return {
         conversationId,
         message: { role: 'assistant', content: cachedReply.content },
         meta: {
           latencyMs: Date.now() - startTime,
           tokens: { input: 0, output: 0, total: 0 },
-          cost:   { input: 0, output: 0, total: 0 },
+          cost:   { input: 0, output: 0, total: 0, saved: savedCost },
           vectorContext: { hit: true, count: 1, cached: true },
         },
       }
@@ -235,11 +248,14 @@ export class Agent extends Resource {
     // 9. Store the assistant's response with its embedding
     const assistantMsgId = crypto.randomUUID()
     const assistantEmbedding = await embed(assistantContent)
+    const searchCost = webSearches * COST_PER_WEB_SEARCH
+    const totalCost = (input_tokens * COST_INPUT_PER_TOKEN) + (output_tokens * COST_OUTPUT_PER_TOKEN) + searchCost
     await tables.Message.put({
       id: assistantMsgId,
       conversationId,
       role: 'assistant',
       content: assistantContent,
+      cost: totalCost,
       embedding: assistantEmbedding,
       createdAt: new Date().toISOString(),
     })
@@ -250,7 +266,6 @@ export class Agent extends Resource {
       updatedAt: new Date().toISOString(),
     })
 
-    const searchCost = webSearches * COST_PER_WEB_SEARCH
     return {
       conversationId,
       message: { role: 'assistant', content: assistantContent },
@@ -265,7 +280,7 @@ export class Agent extends Resource {
           input:   +(input_tokens  * COST_INPUT_PER_TOKEN).toFixed(6),
           output:  +(output_tokens * COST_OUTPUT_PER_TOKEN).toFixed(6),
           search:  +searchCost.toFixed(6),
-          total:   +((input_tokens * COST_INPUT_PER_TOKEN) + (output_tokens * COST_OUTPUT_PER_TOKEN) + searchCost).toFixed(6),
+          total:   +totalCost.toFixed(6),
         },
         webSearches,
         vectorContext: { hit: context.length > 0, count: context.length, cached: false },

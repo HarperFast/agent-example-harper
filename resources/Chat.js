@@ -13,25 +13,22 @@ const HTML = /* html */ `<!DOCTYPE html>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Harper Demo Agent</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Ubuntu:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Ubuntu:ital,wght@0,300;0,400;0,500;0,700;1,300&display=swap" rel="stylesheet">
   <style>
-    /* ── Reset ─────────────────────────────────────────── */
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-    /* ── Harper brand tokens ────────────────────────────── */
     :root {
-      --edge-gray:      #383d40;
-      --bg-deep:        #22262a;
-      --bg-surface:     #2d3136;
+      --bg-deep:        #1a1d20;
+      --bg-surface:     #2a2d30;
       --cloud-white:    #f5f5f5;
-      --muted:          #9ba3ab;
+      --muted:          #8a8f94;
+      --edge-gray:      #383d40;
       --quantum-purple: #312556;
       --cyber-grape:    #7a3a87;
       --bytecode-bloom: #c63368;
       --btree-green:    #66ffcc;
       --border:         rgba(255,255,255,0.08);
     }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
       font-family: 'Ubuntu', system-ui, sans-serif;
@@ -53,35 +50,87 @@ const HTML = /* html */ `<!DOCTYPE html>
       gap: 1rem;
       flex-shrink: 0;
     }
-    header img {
-      height: 28px;
-      width: auto;
-      display: block;
-    }
-    .header-divider {
-      width: 1px;
-      height: 20px;
-      background: var(--border);
-    }
-    .header-sub {
-      font-size: 0.8rem;
-      font-weight: 300;
-      color: var(--muted);
-      letter-spacing: 0.02em;
-    }
-    #conv-badge {
-      margin-left: auto;
-      font-size: 0.62rem;
-      color: var(--muted);
-      font-family: monospace;
-      opacity: 0.6;
+    header img { height: 28px; width: auto; display: block; }
+    .header-divider { width: 1px; height: 20px; background: var(--border); }
+    .header-sub { font-size: 0.8rem; font-weight: 300; color: var(--muted); letter-spacing: 0.02em; }
+    #conv-badge { margin-left: auto; font-size: 0.62rem; color: var(--muted); font-family: monospace; opacity: 0.6; }
+
+    /* ── Main two-column layout ──────────────────────────── */
+    #main {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+      min-height: 0;
     }
 
-    /* ── Chat area ──────────────────────────────────────── */
+    /* ── Left sidebar ────────────────────────────────────── */
+    #sidebar {
+      width: 290px;
+      flex-shrink: 0;
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+      padding: 1.1rem;
+      gap: 1.1rem;
+      background: rgba(0,0,0,0.15);
+    }
+    #sidebar::-webkit-scrollbar { width: 3px; }
+    #sidebar::-webkit-scrollbar-track { background: transparent; }
+    #sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .panel-label {
+      font-size: 0.6rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--muted);
+      padding-bottom: 0.6rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 0.6rem;
+    }
+
+    #diagram svg { width: 100%; height: auto; display: block; }
+
+    /* ── Savings panel ───────────────────────────────────── */
+    #savings-panel {
+      background: rgba(102,255,204,0.04);
+      border: 1px solid rgba(102,255,204,0.2);
+      border-radius: 0.6rem;
+      padding: 0.9rem 1rem;
+    }
+    #savings-amount {
+      font-size: 1.7rem;
+      font-weight: 700;
+      color: var(--btree-green);
+      letter-spacing: -0.02em;
+      line-height: 1;
+      margin-bottom: 0.3rem;
+    }
+    #savings-hits {
+      font-size: 0.75rem;
+      color: var(--btree-green);
+      opacity: 0.7;
+      margin-bottom: 0.2rem;
+    }
+    #savings-sub {
+      font-size: 0.65rem;
+      color: var(--muted);
+    }
+
+    /* ── Chat panel ──────────────────────────────────────── */
+    #chat-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      min-width: 0;
+    }
+
     #chat {
       flex: 1;
       overflow-y: auto;
-      padding: 1.5rem 1.25rem;
+      padding: 1.25rem;
       display: flex;
       flex-direction: column;
       gap: 1rem;
@@ -92,11 +141,7 @@ const HTML = /* html */ `<!DOCTYPE html>
     #chat::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
 
     /* ── Messages ───────────────────────────────────────── */
-    .message {
-      display: flex;
-      flex-direction: column;
-      max-width: 76%;
-    }
+    .message { display: flex; flex-direction: column; max-width: 78%; }
     .message.user      { align-self: flex-end;  align-items: flex-end; }
     .message.assistant { align-self: flex-start; align-items: flex-start; }
 
@@ -127,11 +172,7 @@ const HTML = /* html */ `<!DOCTYPE html>
     .bubble strong { font-weight: 700; }
     .bubble em { font-style: italic; }
     .bubble code { font-family: monospace; font-size: 0.88em; background: rgba(255,255,255,0.08); padding: 0.1em 0.35em; border-radius: 0.25rem; }
-    .error .bubble {
-      background: rgba(198, 51, 104, 0.15);
-      border-color: var(--bytecode-bloom);
-      color: #f8a;
-    }
+    .error .bubble { background: rgba(198,51,104,0.15); border-color: var(--bytecode-bloom); color: #f8a; }
 
     /* ── Metadata strip ─────────────────────────────────── */
     .meta {
@@ -140,26 +181,14 @@ const HTML = /* html */ `<!DOCTYPE html>
       gap: 0.35rem 1rem;
       margin-top: 0.45rem;
       padding: 0.45rem 0.8rem;
-      background: rgba(102, 255, 204, 0.05);
-      border: 1px solid rgba(102, 255, 204, 0.2);
+      background: rgba(102,255,204,0.05);
+      border: 1px solid rgba(102,255,204,0.2);
       border-radius: 0.5rem;
       font-size: 0.67rem;
       color: var(--muted);
     }
-    .meta .pill {
-      display: flex;
-      align-items: center;
-      gap: 0.3rem;
-      white-space: nowrap;
-    }
-    .meta .pill .label {
-      font-weight: 500;
-      font-size: 0.58rem;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: var(--btree-green);
-      opacity: 0.8;
-    }
+    .meta .pill { display: flex; align-items: center; gap: 0.3rem; white-space: nowrap; }
+    .meta .pill .label { font-weight: 500; font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--btree-green); opacity: 0.8; }
     .meta .pill.vector-hit  { color: var(--btree-green); }
     .meta .pill.vector-hit .label { opacity: 1; }
     .meta .pill.vector-miss { color: var(--muted); }
@@ -171,76 +200,18 @@ const HTML = /* html */ `<!DOCTYPE html>
 
     /* ── Typing indicator ───────────────────────────────── */
     .typing-wrap { align-self: flex-start; }
-    .typing {
-      display: flex;
-      align-items: center;
-      gap: 5px;
-      padding: 0.7rem 1rem;
-      background: var(--bg-surface);
-      border: 1px solid var(--border);
-      border-radius: 1rem;
-      border-bottom-left-radius: 0.2rem;
-    }
-    .typing span {
-      display: block;
-      width: 7px; height: 7px;
-      background: var(--btree-green);
-      border-radius: 50%;
-      opacity: 0.4;
-      animation: pulse 1.2s ease-in-out infinite;
-    }
+    .typing { display: flex; align-items: center; gap: 5px; padding: 0.7rem 1rem; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 1rem; border-bottom-left-radius: 0.2rem; }
+    .typing span { display: block; width: 7px; height: 7px; background: var(--btree-green); border-radius: 50%; opacity: 0.4; animation: pulse 1.2s ease-in-out infinite; }
     .typing span:nth-child(2) { animation-delay: 0.2s; }
     .typing span:nth-child(3) { animation-delay: 0.4s; }
-    @keyframes pulse {
-      0%, 80%, 100% { opacity: 0.4; transform: scale(1); }
-      40%           { opacity: 1;   transform: scale(1.2); }
-    }
+    @keyframes pulse { 0%, 80%, 100% { opacity: 0.4; transform: scale(1); } 40% { opacity: 1; transform: scale(1.2); } }
 
     /* ── Input bar ──────────────────────────────────────── */
-    .input-bar {
-      background: #1a1d20;
-      border-top: 1px solid var(--border);
-      padding: 0.875rem 1.25rem;
-      display: flex;
-      align-items: flex-end;
-      gap: 0.625rem;
-      flex-shrink: 0;
-    }
-    #input {
-      flex: 1;
-      resize: none;
-      background: var(--bg-surface);
-      border: 1px solid var(--border);
-      border-radius: 0.75rem;
-      padding: 0.65rem 1rem;
-      font-family: 'Ubuntu', sans-serif;
-      font-size: 0.92rem;
-      font-weight: 300;
-      color: var(--cloud-white);
-      outline: none;
-      height: 2.6rem;
-      max-height: 9rem;
-      overflow-y: auto;
-      transition: border-color 0.15s;
-    }
+    .input-bar { background: #1a1d20; border-top: 1px solid var(--border); padding: 0.875rem 1.25rem; display: flex; align-items: flex-end; gap: 0.625rem; flex-shrink: 0; }
+    #input { flex: 1; resize: none; background: var(--bg-surface); border: 1px solid var(--border); border-radius: 0.75rem; padding: 0.65rem 1rem; font-family: 'Ubuntu', sans-serif; font-size: 0.92rem; font-weight: 300; color: var(--cloud-white); outline: none; height: 2.6rem; max-height: 9rem; overflow-y: auto; transition: border-color 0.15s; }
     #input::placeholder { color: var(--muted); opacity: 0.7; }
-    #input:focus { border-color: rgba(102, 255, 204, 0.4); }
-    #send {
-      height: 2.6rem;
-      padding: 0 1.25rem;
-      background: var(--btree-green);
-      color: #1a1d20;
-      border: none;
-      border-radius: 0.75rem;
-      font-family: 'Ubuntu', sans-serif;
-      font-size: 0.9rem;
-      font-weight: 700;
-      cursor: pointer;
-      transition: opacity 0.15s, transform 0.1s;
-      white-space: nowrap;
-      flex-shrink: 0;
-      letter-spacing: 0.01em;
-    }
+    #input:focus { border-color: rgba(102,255,204,0.4); }
+    #send { height: 2.6rem; padding: 0 1.25rem; background: var(--btree-green); color: #1a1d20; border: none; border-radius: 0.75rem; font-family: 'Ubuntu', sans-serif; font-size: 0.9rem; font-weight: 700; cursor: pointer; transition: opacity 0.15s, transform 0.1s; white-space: nowrap; flex-shrink: 0; letter-spacing: 0.01em; }
     #send:hover:not(:disabled) { opacity: 0.88; }
     #send:active:not(:disabled) { transform: scale(0.97); }
     #send:disabled { opacity: 0.3; cursor: not-allowed; }
@@ -255,11 +226,97 @@ const HTML = /* html */ `<!DOCTYPE html>
   <span id="conv-badge"></span>
 </header>
 
-<div id="chat"></div>
+<div id="main">
 
-<div class="input-bar">
-  <textarea id="input" placeholder="Ask anything… (Enter to send, Shift+Enter for newline)" rows="1"></textarea>
-  <button id="send">Send</button>
+  <aside id="sidebar">
+
+    <div id="diagram-section">
+      <div class="panel-label">Architecture</div>
+      <div id="diagram">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 296" style="font-family:Ubuntu,sans-serif;">
+          <defs>
+            <marker id="ah" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
+              <path d="M0,0 L0,7 L7,3.5 z" fill="rgba(255,255,255,0.22)"/>
+            </marker>
+            <marker id="ah-g" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
+              <path d="M0,0 L0,7 L7,3.5 z" fill="#66ffcc"/>
+            </marker>
+          </defs>
+
+          <!-- User Query -->
+          <rect x="80" y="4" width="100" height="28" rx="5" fill="#312556" stroke="#7a3a87" stroke-width="1"/>
+          <text x="130" y="22" text-anchor="middle" fill="#f5f5f5" font-size="11" font-weight="500">User Query</text>
+
+          <!-- Arrow: User → Harper -->
+          <line x1="130" y1="32" x2="130" y2="50" stroke="rgba(255,255,255,0.22)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+          <!-- Harper container -->
+          <rect x="4" y="52" width="252" height="96" rx="7" fill="rgba(102,255,204,0.04)" stroke="#66ffcc" stroke-width="1.5"/>
+          <text x="130" y="68" text-anchor="middle" fill="#66ffcc" font-size="9" font-weight="700" letter-spacing="0.1em">HARPER</text>
+
+          <!-- Vector Store (inside Harper) -->
+          <rect x="12" y="74" width="110" height="64" rx="5" fill="#2a2d30" stroke="rgba(102,255,204,0.28)" stroke-width="1"/>
+          <text x="67" y="92" text-anchor="middle" fill="#f5f5f5" font-size="10" font-weight="500">Vector Store</text>
+          <text x="67" y="107" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">HNSW Index</text>
+          <text x="67" y="120" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">semantic context</text>
+          <text x="67" y="131" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">for responses</text>
+
+          <!-- Semantic Cache (inside Harper) -->
+          <rect x="138" y="74" width="110" height="64" rx="5" fill="#2a2d30" stroke="rgba(102,255,204,0.28)" stroke-width="1"/>
+          <text x="193" y="92" text-anchor="middle" fill="#f5f5f5" font-size="10" font-weight="500">Semantic Cache</text>
+          <text x="193" y="107" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">cosine sim &gt;= 0.88</text>
+          <text x="193" y="120" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">instant answers</text>
+          <text x="193" y="131" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">$0 LLM cost</text>
+
+          <!-- Arrows from Harper bottom (split) -->
+          <!-- Cache miss: left -->
+          <line x1="67" y1="148" x2="67" y2="170" stroke="rgba(255,255,255,0.22)" stroke-width="1.5" marker-end="url(#ah)"/>
+          <text x="67" y="163" text-anchor="middle" fill="rgba(255,255,255,0.28)" font-size="8" dx="-28">cache miss</text>
+
+          <!-- Cache hit: right (green) -->
+          <line x1="193" y1="148" x2="193" y2="170" stroke="#66ffcc" stroke-width="1.5" marker-end="url(#ah-g)"/>
+          <text x="193" y="163" text-anchor="middle" fill="#66ffcc" font-size="8" dx="24" opacity="0.75">cache hit</text>
+
+          <!-- Claude box -->
+          <rect x="4" y="172" width="126" height="56" rx="6" fill="#312556" stroke="#7a3a87" stroke-width="1"/>
+          <text x="67" y="191" text-anchor="middle" fill="#f5f5f5" font-size="10" font-weight="500">Claude Sonnet</text>
+          <text x="67" y="206" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-size="8.5">Web Search built-in</text>
+          <text x="67" y="220" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-size="8.5">Anthropic API</text>
+
+          <!-- Cache response box -->
+          <rect x="138" y="172" width="118" height="56" rx="6" fill="rgba(102,255,204,0.07)" stroke="#66ffcc" stroke-width="1.5"/>
+          <text x="197" y="191" text-anchor="middle" fill="#66ffcc" font-size="10" font-weight="600">Harper Cache</text>
+          <text x="197" y="206" text-anchor="middle" fill="#66ffcc" font-size="10" font-weight="600">Response</text>
+          <text x="197" y="220" text-anchor="middle" fill="rgba(102,255,204,0.6)" font-size="8.5">$0.00 &bull; &lt;50ms</text>
+
+          <!-- Arrow: Claude → Embed -->
+          <line x1="67" y1="228" x2="67" y2="254" stroke="rgba(255,255,255,0.22)" stroke-width="1.5" marker-end="url(#ah)"/>
+
+          <!-- Embed & Store box -->
+          <rect x="4" y="256" width="126" height="34" rx="6" fill="#383d40" stroke="rgba(255,255,255,0.14)" stroke-width="1"/>
+          <text x="67" y="270" text-anchor="middle" fill="rgba(255,255,255,0.55)" font-size="9">Embed &amp; Store</text>
+          <text x="67" y="283" text-anchor="middle" fill="rgba(255,255,255,0.55)" font-size="9">result in Harper</text>
+        </svg>
+      </div>
+    </div>
+
+    <div id="savings-panel">
+      <div class="panel-label">Harper Savings</div>
+      <div id="savings-amount">$0.0000</div>
+      <div id="savings-hits">0 cache hits</div>
+      <div id="savings-sub">saved across all conversations</div>
+    </div>
+
+  </aside>
+
+  <div id="chat-panel">
+    <div id="chat"></div>
+    <div class="input-bar">
+      <textarea id="input" placeholder="Ask anything… (Enter to send, Shift+Enter for newline)" rows="1"></textarea>
+      <button id="send">Send</button>
+    </div>
+  </div>
+
 </div>
 
 <script>
@@ -271,15 +328,30 @@ const HTML = /* html */ `<!DOCTYPE html>
 
   function scrollBottom() { chat.scrollTop = chat.scrollHeight }
 
-  // Lightweight markdown renderer — bold, italic, inline code, numbered + bullet lists, paragraphs
+  async function fetchSavings() {
+    try {
+      const res = await fetch('/Stats/global')
+      if (!res.ok) return
+      const data = await res.json()
+      if (data && typeof data === 'object') {
+        const saved = data.totalSaved ?? 0
+        const hits  = data.cacheHits  ?? 0
+        document.getElementById('savings-amount').textContent = '$' + saved.toFixed(4)
+        document.getElementById('savings-hits').textContent   = hits + ' cache hit' + (hits !== 1 ? 's' : '')
+      }
+    } catch {}
+  }
+
+  fetchSavings()
+
   function renderMarkdown(text) {
     const escape = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
-    const lines = text.split('\\n')
+    const lines = text.split('\n')
     let html = '', inOl = false, inUl = false
     for (const raw of lines) {
       const line = raw
-      const olMatch = line.match(/^(\\d+)\\.\\s+(.*)/)
-      const ulMatch = line.match(/^[-*]\\s+(.*)/)
+      const olMatch = line.match(/^(\d+)\.\s+(.*)/)
+      const ulMatch = line.match(/^[-*]\s+(.*)/)
       if (olMatch) {
         if (!inOl) { if (inUl) { html += '</ul>'; inUl=false; } html += '<ol>'; inOl=true; }
         html += '<li>' + fmt(escape(olMatch[2])) + '</li>'
@@ -298,9 +370,9 @@ const HTML = /* html */ `<!DOCTYPE html>
   }
   function fmt(s) {
     return s
-      .replace(/\\*\\*\\*(.+?)\\*\\*\\*/g, '<strong><em>$1</em></strong>')
-      .replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>')
-      .replace(/\\*(.+?)\\*/g, '<em>$1</em>')
+      .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>')
       .replace(/\x60(.+?)\x60/g, '<code>$1</code>')
   }
 
@@ -324,9 +396,10 @@ const HTML = /* html */ `<!DOCTYPE html>
     const latency = (latencyMs / 1000).toFixed(2) + 's'
 
     if (vectorContext.cached) {
+      const saved = cost.saved ? ' · saved $' + cost.saved.toFixed(4) : ''
       div.innerHTML =
         '<span class="pill"><span class="label">Latency</span>' + latency + '</span>' +
-        '<span class="pill cache-hit"><span class="label">Cache</span>Served from Harper semantic cache — $0.00 · 0 tokens</span>'
+        '<span class="pill cache-hit"><span class="label">Cache</span>Served from Harper semantic cache — $0.00 · 0 tokens' + saved + '</span>'
     } else {
       const tok      = tokens.input + ' in / ' + tokens.output + ' out'
       const usd      = '$' + cost.total.toFixed(4)
@@ -378,6 +451,7 @@ const HTML = /* html */ `<!DOCTYPE html>
         conversationId = data.conversationId
         badge.textContent = 'conv ' + conversationId.slice(0, 8) + '…'
         addMessage('assistant', data.message.content, data.meta)
+        fetchSavings()
       }
     } catch (err) {
       indicator.remove()

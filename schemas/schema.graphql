@@ -10,6 +10,14 @@ type Message @table @export {
   conversationId: String @indexed
   role: String
   content: String
+  cost: Float
   embedding: [Float] @indexed(type: "HNSW", distance: "cosine")
   createdAt: String
+}
+
+type Stats @table @export {
+  id: ID @primaryKey
+  totalSaved: Float
+  cacheHits: Int
+  updatedAt: String
 }

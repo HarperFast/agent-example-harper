@@ -12,8 +12,10 @@
     "prestart": "node scripts/download-model.js",
     "start": "npx -y dotenv-cli -e .env -o -- harperdb run .",
     "dev": "npx -y dotenv-cli -e .env -o -- harperdb dev .",
+    "login": "node login.js",
     "deploy": "npx -y dotenv-cli -- harperdb deploy . restart=rolling replicated=true"
   },
+
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "graphql": "^16.8.1",
