@@ -216,12 +216,11 @@ export class Agent extends Resource {
 
     const latencyMs = Date.now() - startTime
 
-    // Extract text blocks (response also contains server_tool_use / web_search_tool_result blocks)
-    const assistantContent = apiResponse.content
-      .filter((b) => b.type === 'text')
-      .map((b) => b.text)
-      .join('\n')
-      .trim()
+    // Extract the final text block only — Claude may emit intermediate text before web search
+    // tool calls (e.g. "Let me search for this…"). Taking the last text block ensures we only
+    // return the actual answer, not any pre-search reasoning that got concatenated.
+    const textBlocks = apiResponse.content.filter((b) => b.type === 'text')
+    const assistantContent = (textBlocks.at(-1)?.text ?? '').trim()
 
     const { input_tokens, output_tokens } = apiResponse.usage
     const webSearches = apiResponse.usage?.server_tool_use?.web_search_requests ?? 0
