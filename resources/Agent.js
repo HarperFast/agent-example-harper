@@ -7,9 +7,9 @@ let _client
 const getClient = () =>
   (_client ??= new Anthropic({ apiKey: config.anthropic.apiKey() }))
 
-const SYSTEM_PROMPT = `You are a helpful, concise assistant. You have access to \
-relevant context from previous conversations when available. Use this context \
-naturally — don't mention that you're reading stored memories unless the user asks.`
+const SYSTEM_PROMPT = `You are a helpful, concise assistant. Answer only the user's current question. \
+Do NOT summarize, repeat, or reference prior conversation context in your response — use it silently \
+as background knowledge only if it is directly relevant. Never recite or recap previous answers.`
 
 // Approximate pricing for Claude Sonnet 4.5 (per token)
 const COST_INPUT_PER_TOKEN  = 3  / 1_000_000  // $3  / 1M input tokens
@@ -172,7 +172,7 @@ export class Agent extends Resource {
     const context = relevant.slice(0, 5)
     let systemPrompt = SYSTEM_PROMPT
     if (context.length > 0) {
-      systemPrompt += '\n\nRelevant context from memory:\n' +
+      systemPrompt += '\n\nBackground context (do NOT repeat or summarize this — use silently only if directly relevant):\n' +
         context.map((m) => `[${m.role}]: ${m.content}`).join('\n')
     }
 
