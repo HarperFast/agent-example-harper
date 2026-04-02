@@ -350,8 +350,8 @@ const HTML = /* html */ `<!DOCTYPE html>
     let html = '', inOl = false, inUl = false
     for (const raw of lines) {
       const line = raw
-      const olMatch = line.match(/^(\d+)\.\s+(.*)/)
-      const ulMatch = line.match(/^[-*]\s+(.*)/)
+      const olMatch = line.match(/^(\\d+)\\.\\s+(.*)/)
+      const ulMatch = line.match(/^[-*]\\s+(.*)/)
       if (olMatch) {
         if (!inOl) { if (inUl) { html += '</ul>'; inUl=false; } html += '<ol>'; inOl=true; }
         html += '<li>' + fmt(escape(olMatch[2])) + '</li>'
@@ -370,9 +370,9 @@ const HTML = /* html */ `<!DOCTYPE html>
   }
   function fmt(s) {
     return s
-      .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
-      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-      .replace(/\*(.+?)\*/g, '<em>$1</em>')
+      .replace(/\\*\\*\\*(.+?)\\*\\*\\*/g, '<strong><em>$1</em></strong>')
+      .replace(/\\*\\*(.+?)\\*\\*/g, '<strong>$1</strong>')
+      .replace(/\\*(.+?)\\*/g, '<em>$1</em>')
       .replace(/\x60(.+?)\x60/g, '<code>$1</code>')
   }
 
