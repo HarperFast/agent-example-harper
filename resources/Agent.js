@@ -19,10 +19,6 @@ const COST_PER_WEB_SEARCH   = 10 / 1_000      // $10 / 1K searches
 // Anthropic web search tool — executed server-side, no external API key needed
 const WEB_SEARCH_TOOL = { type: 'web_search_20250305', name: 'web_search', max_uses: 5 }
 
-// Normalize text for exact cache comparison
-const normalize = (s) =>
-  s.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim()
-
 // Cosine distance threshold for Harper's native HNSW vector search.
 // Harper uses cosine *distance* (0 = identical, 2 = opposite), so this is
 // equivalent to cosine similarity >= 0.88 (distance = 1 - similarity = 0.12).
@@ -67,77 +63,36 @@ export class Agent extends Resource {
       createdAt: new Date().toISOString(),
     })
 
-    // 4. Vector search for relevant messages across all conversations (semantic context for LLM)
-    //    Harper's HNSW index sorts by cosine distance natively — no in-memory math needed.
-    const relevant = []
-    const searchResults = tables.Message.search({
-      sort: { attribute: 'embedding', target: userEmbedding },
+    // 4. Semantic cache — Harper-native HNSW vector search with distance threshold.
+    //    If a semantically similar question was asked before (by anyone, in any conversation),
+    //    serve the cached answer instantly at $0 LLM cost. This is the core demo: ask once,
+    //    pay once — every repeat or rephrase is free.
+    let cachedReply = null
+    const nearbyMsgs = tables.Message.search({
+      conditions: {
+        attribute: 'embedding',
+        comparator: 'lt',
+        value: CACHE_DISTANCE_THRESHOLD,
+        target: userEmbedding,
+      },
       limit: 10,
     })
-    for await (const msg of searchResults) {
-      if (msg.content && msg.id !== userMsgId) {
-        relevant.push(msg)
-      }
-    }
 
-    // 5. Load full conversation history (includes current user message)
-    const recent = []
-    const history = tables.Message.search({
-      conditions: [{ attribute: 'conversationId', value: conversationId }],
-      limit: 100,
-    })
-    for await (const msg of history) {
-      recent.push({ id: msg.id, role: msg.role, content: msg.content, createdAt: msg.createdAt })
-    }
-    recent.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-
-    // 6. Semantic cache check
-    //
-    //    First: look in this conversation's history for an identical prior question.
-    //    This is the most reliable path — no extra DB round-trip needed.
-    let cachedReply = null
-
-    const prevSame = recent.find(
-      (m) => m.id !== userMsgId &&
-             m.role === 'user' &&
-             m.content &&
-             normalize(m.content) === normalize(message)
-    )
-    if (prevSame) {
-      const pIdx = recent.indexOf(prevSame)
-      cachedReply = recent.slice(pIdx + 1).find((m) => m.role === 'assistant') ?? null
-    }
-
-    // Second: Harper-native HNSW vector search with distance threshold.
-    // Using conditions + comparator 'lt' lets Harper's index filter results
-    // without fetching all records or doing any in-memory cosine math.
-    if (!cachedReply) {
-      const nearbyMsgs = tables.Message.search({
-        conditions: {
-          attribute: 'embedding',
-          comparator: 'lt',
-          value: CACHE_DISTANCE_THRESHOLD,
-          target: userEmbedding,
-        },
-        limit: 10,
+    for await (const match of nearbyMsgs) {
+      if (match.id === userMsgId || match.role !== 'user') continue
+      // Find the assistant reply that followed this question in its conversation
+      const matchConvMsgs = []
+      const matchHistory = tables.Message.search({
+        conditions: [{ attribute: 'conversationId', value: match.conversationId }],
+        limit: 100,
       })
-
-      for await (const match of nearbyMsgs) {
-        if (match.id === userMsgId || match.role !== 'user') continue
-        // Find the assistant reply that followed this question in its conversation
-        const matchConvMsgs = []
-        const matchHistory = tables.Message.search({
-          conditions: [{ attribute: 'conversationId', value: match.conversationId }],
-          limit: 100,
-        })
-        for await (const m of matchHistory) matchConvMsgs.push(m)
-        matchConvMsgs.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
-        const midx = matchConvMsgs.findIndex((m) => m.id === match.id)
-        const reply = matchConvMsgs.slice(midx + 1).find((m) => m.role === 'assistant')
-        if (reply) {
-          cachedReply = reply
-          break
-        }
+      for await (const m of matchHistory) matchConvMsgs.push(m)
+      matchConvMsgs.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+      const midx = matchConvMsgs.findIndex((m) => m.id === match.id)
+      const reply = matchConvMsgs.slice(midx + 1).find((m) => m.role === 'assistant')
+      if (reply) {
+        cachedReply = reply
+        break
       }
     }
 
@@ -168,28 +123,15 @@ export class Agent extends Resource {
       }
     }
 
-    // 7. Build the prompt with semantic context (top 5 relevant messages)
-    const context = relevant.slice(0, 5)
-    let systemPrompt = SYSTEM_PROMPT
-    if (context.length > 0) {
-      systemPrompt += '\n\nBackground context (do NOT repeat or summarize this — use silently only if directly relevant):\n' +
-        context.map((m) => `[${m.role}]: ${m.content}`).join('\n')
-    }
-
-    // 8. Call Claude with web search enabled — Anthropic executes searches server-side,
-    //    no external search API or key required.
-    const messages = [
-      ...recent
-        .filter((m) => m.id !== userMsgId)
-        .map(({ role, content }) => ({ role, content })),
-      { role: 'user', content: message },
-    ]
+    // 5. Call Claude with web search enabled — standalone question, no conversation history.
+    //    Anthropic executes searches server-side, no external search API or key required.
+    const messages = [{ role: 'user', content: message }]
 
     let apiResponse = await getClient().messages.create({
       model: config.anthropic.model(),
       max_tokens: 1024,
       tools: [WEB_SEARCH_TOOL],
-      system: systemPrompt,
+      system: SYSTEM_PROMPT,
       messages,
     })
 
@@ -199,7 +141,7 @@ export class Agent extends Resource {
         model: config.anthropic.model(),
         max_tokens: 1024,
         tools: [WEB_SEARCH_TOOL],
-        system: systemPrompt,
+        system: SYSTEM_PROMPT,
         messages: [...messages, { role: 'assistant', content: apiResponse.content }],
       })
     }
@@ -260,7 +202,7 @@ export class Agent extends Resource {
           total:   +totalCost.toFixed(6),
         },
         webSearches,
-        vectorContext: { hit: context.length > 0, count: context.length, cached: false },
+        vectorContext: { hit: false, count: 0, cached: false },
       },
     }
   }
