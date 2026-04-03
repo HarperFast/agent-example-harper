@@ -1,11 +1,11 @@
-type Conversation @table @export {
+type Conversation @table(expiration: 3600) @export {
   id: ID @primaryKey
   title: String
   createdAt: String
   updatedAt: String
 }
 
-type Message @table @export {
+type Message @table(expiration: 3600) @export {
   id: ID @primaryKey
   conversationId: String @indexed
   role: String
