@@ -24,7 +24,14 @@ User Query
 ┌──────────────────────────────────────────────────────────┐
 │                         Harper                           │
 │                                                          │
-│  1. Embed user message (Local SLM: bge-small-en-v1.5)   │
+│  1. Embed user message                                   │
+│     ┌─────────────────────┐                              │
+│     │   EmbeddingCache    │ ← normalized text → vector   │
+│     │   hit: ~1ms lookup  │   miss: SLM generates it,   │
+│     │   (skip SLM)        │   then stores for next time  │
+│     └─────────────────────┘                              │
+│     Local SLM: bge-small-en-v1.5 (llama.cpp, in-process)│
+│                                                          │
 │  2. Store user message + embedding                       │
 │  3. HNSW semantic cache check (cosine distance < 0.12)   │
 │       │                          │                       │
@@ -32,13 +39,13 @@ User Query
 │       │                          │                       │
 │  Return $0.00           Call Claude ──────────────────────┼──► Anthropic API
 │  + saved $X                      │                       │    + Web Search
-│                          Embed response (local SLM)  ◄───┘
+│                          Embed response (via cache/SLM)  │◄──────────┘
 │                          Store in Harper                  │
 │                                                          │
 └──────────────────────────────────────────────────────────┘
 ```
 
-Every request is standalone. Ask once, pay for Claude. Ask again — or rephrase the same question — and Harper serves the cached answer instantly at $0.
+Every request is standalone. Ask once, pay for Claude. Ask again — or rephrase the same question — and Harper serves the cached answer instantly at $0. The embedding cache eliminates the SLM cost on repeated text (~2.3s on Fabric → ~1ms).
 
 ## How the Semantic Cache Works
 
