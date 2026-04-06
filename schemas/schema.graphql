@@ -15,6 +15,11 @@ type Message @table(expiration: 3600) @export {
   createdAt: String
 }
 
+type EmbeddingCache @table @export {
+  id: ID @primaryKey
+  embedding: [Float]
+}
+
 type Stats @table @export {
   id: ID @primaryKey
   totalSaved: Float

@@ -19,10 +19,25 @@ const COST_PER_WEB_SEARCH   = 10 / 1_000      // $10 / 1K searches
 // Anthropic web search tool — executed server-side, no external API key needed
 const WEB_SEARCH_TOOL = { type: 'web_search_20250305', name: 'web_search', max_uses: 5 }
 
+// Normalize text for embedding cache key — lowercase, strip punctuation, collapse whitespace
+const normalize = (s) =>
+  s.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim()
+
 // Cosine distance threshold for Harper's native HNSW vector search.
 // Harper uses cosine *distance* (0 = identical, 2 = opposite), so this is
 // equivalent to cosine similarity >= 0.88 (distance = 1 - similarity = 0.12).
 const CACHE_DISTANCE_THRESHOLD = 0.12
+
+// Get or compute an embedding, using Harper as a cache to skip the SLM on repeated text.
+// On Fabric, the SLM takes ~2.3s per embedding — this cache makes repeat queries instant.
+async function cachedEmbed(text) {
+  const key = normalize(text)
+  const cached = await tables.EmbeddingCache.get(key)
+  if (cached?.embedding) return cached.embedding
+  const embedding = await embed(text)
+  await tables.EmbeddingCache.put({ id: key, embedding })
+  return embedding
+}
 
 export class Agent extends Resource {
   static loadAsInstance = false
@@ -40,7 +55,7 @@ export class Agent extends Resource {
 
     // 1. Embed first — before any DB writes to avoid holding transactions open
     const t1 = Date.now()
-    const userEmbedding = await embed(message)
+    const userEmbedding = await cachedEmbed(message)
     const tEmbed = Date.now() - t1
 
     // 2. Create or reuse a conversation
@@ -176,7 +191,7 @@ export class Agent extends Resource {
 
     // 9. Store the assistant's response with its embedding
     const assistantMsgId = crypto.randomUUID()
-    const assistantEmbedding = await embed(assistantContent)
+    const assistantEmbedding = await cachedEmbed(assistantContent)
     const searchCost = webSearches * COST_PER_WEB_SEARCH
     const totalCost = (input_tokens * COST_INPUT_PER_TOKEN) + (output_tokens * COST_OUTPUT_PER_TOKEN) + searchCost
     await tables.Message.put({
