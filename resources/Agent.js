@@ -1,11 +1,25 @@
 import { Resource, tables } from 'harperdb'
 import Anthropic from '@anthropic-ai/sdk'
+import { AnthropicVertex } from '@anthropic-ai/vertex-sdk'
 import { config } from '../lib/config.js'
 import { embed } from '../lib/embeddings.js'
 
 let _client
-const getClient = () =>
-  (_client ??= new Anthropic({ apiKey: config.anthropic.apiKey() }))
+const getClient = () => {
+  if (_client) return _client
+  if (config.provider() === 'vertex') {
+    _client = new AnthropicVertex({
+      projectId: config.vertex.projectId(),
+      region: config.vertex.region(),
+    })
+  } else {
+    _client = new Anthropic({ apiKey: config.anthropic.apiKey() })
+  }
+  return _client
+}
+
+const getModel = () =>
+  config.provider() === 'vertex' ? config.vertex.model() : config.anthropic.model()
 
 const SYSTEM_PROMPT = `You are a helpful, concise assistant. Answer only the user's current question. \
 Do NOT summarize, repeat, or reference prior conversation context in your response — use it silently \
@@ -16,8 +30,10 @@ const COST_INPUT_PER_TOKEN  = 3  / 1_000_000  // $3  / 1M input tokens
 const COST_OUTPUT_PER_TOKEN = 15 / 1_000_000  // $15 / 1M output tokens
 const COST_PER_WEB_SEARCH   = 10 / 1_000      // $10 / 1K searches
 
-// Anthropic web search tool — executed server-side, no external API key needed
+// Anthropic web search tool — executed server-side, no external API key needed.
+// Not available on Vertex AI without an org policy change.
 const WEB_SEARCH_TOOL = { type: 'web_search_20250305', name: 'web_search', max_uses: 5 }
+const isVertex = () => config.provider() === 'vertex'
 
 // Normalize text for embedding cache key — lowercase, strip punctuation, collapse whitespace
 const normalize = (s) =>
@@ -152,10 +168,12 @@ export class Agent extends Resource {
     //    Anthropic executes searches server-side, no external search API or key required.
     const messages = [{ role: 'user', content: message }]
 
+    const tools = isVertex() ? [] : [WEB_SEARCH_TOOL]
+
     let apiResponse = await getClient().messages.create({
-      model: config.anthropic.model(),
+      model: getModel(),
       max_tokens: 1024,
-      tools: [WEB_SEARCH_TOOL],
+      ...(tools.length && { tools }),
       system: SYSTEM_PROMPT,
       messages,
     })
@@ -163,9 +181,9 @@ export class Agent extends Resource {
     // Handle pause_turn — server hit the max_uses limit mid-response; continue once
     if (apiResponse.stop_reason === 'pause_turn') {
       apiResponse = await getClient().messages.create({
-        model: config.anthropic.model(),
+        model: getModel(),
         max_tokens: 1024,
-        tools: [WEB_SEARCH_TOOL],
+        ...(tools.length && { tools }),
         system: SYSTEM_PROMPT,
         messages: [...messages, { role: 'assistant', content: apiResponse.content }],
       })

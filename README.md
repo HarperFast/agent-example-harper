@@ -1,6 +1,6 @@
 # Harper Demo Agent
 
-A conversational AI agent with persistent semantic memory, a two-layer semantic cache, web search, cost tracking, and a browser chat UI — all running on [Harper](https://harper.fast) with Claude.
+A conversational AI agent with persistent semantic memory, a two-layer semantic cache, web search, cost tracking, and a browser chat UI — all running on [Harper](https://harper.fast) with Claude (via the Anthropic API or Google Cloud Vertex AI).
 
 Live demo: **[agent-example.stephen-demo-org.harperfabric.com/Chat](https://agent-example.stephen-demo-org.harperfabric.com/Chat)**
 
@@ -71,7 +71,9 @@ Cache hits return `cost.total: 0` and include a `cost.saved` field showing what 
 
 - [Node.js](https://nodejs.org/) 22+
 - [Harper CLI](https://www.npmjs.com/package/harperdb): `npm install -g harperdb`
-- [Anthropic API key](https://console.anthropic.com/)
+- **One of:**
+  - [Anthropic API key](https://console.anthropic.com/) (direct API — default)
+  - [Google Cloud project](https://console.cloud.google.com/) with Vertex AI enabled (GCP Vertex AI)
 
 No embedding API key needed — embeddings run in-process.
 
@@ -86,12 +88,66 @@ cd agent-example-harper
 npm install
 
 # Configure environment
-cp .env.example .env
-# Edit .env — add your ANTHROPIC_API_KEY
+cp dot-env.example .env
+# Edit .env — see "LLM Provider Setup" below
 
 # Start the dev server
 npm run dev
 ```
+
+## LLM Provider Setup
+
+This agent supports two LLM backends — the direct Anthropic API and Google Cloud Vertex AI. Set `LLM_PROVIDER` in your `.env` to choose which one to use.
+
+### Option A: Anthropic API (default)
+
+The simplest path. You just need an API key from [console.anthropic.com](https://console.anthropic.com/).
+
+```env
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Web search is included automatically via Anthropic's server-side `web_search_20250305` tool — no additional API keys required.
+
+### Option B: Google Cloud Vertex AI
+
+Run Claude through your own GCP project. Useful for enterprise environments, org-level billing, data residency, and keeping everything inside Google Cloud.
+
+**1. Enable the Vertex AI API** in your GCP project:
+
+```
+https://console.developers.google.com/apis/api/aiplatform.googleapis.com/overview?project=YOUR_PROJECT_ID
+```
+
+**2. Enable a Claude model** in the [Vertex AI Model Garden](https://console.cloud.google.com/vertex-ai/model-garden) — search for "Claude" and enable the model you want.
+
+**3. Request quota** — new projects start with 0 tokens/min. Go to [IAM & Admin → Quotas](https://console.cloud.google.com/iam-admin/quotas), filter for your Claude model, and request an increase.
+
+**4. Create a service account** with the **Vertex AI User** role, download the JSON key, and place it in the project root.
+
+**5. Configure `.env`:**
+
+```env
+LLM_PROVIDER=vertex
+VERTEX_PROJECT_ID=my-gcp-project
+VERTEX_REGION=us-east5
+GOOGLE_APPLICATION_CREDENTIALS=./your-service-account-key.json
+```
+
+> **Note:** Web search is not available on Vertex AI by default (requires an org policy change). The agent automatically disables it when running on Vertex.
+
+### Environment Variable Reference
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `LLM_PROVIDER` | No | `anthropic` | `anthropic` or `vertex` |
+| `ANTHROPIC_API_KEY` | When `anthropic` | — | Anthropic API key |
+| `VERTEX_PROJECT_ID` | When `vertex` | — | GCP project ID |
+| `VERTEX_REGION` | No | `global` | Vertex AI region (e.g. `us-east5`, `global`) |
+| `VERTEX_MODEL` | No | `claude-sonnet-4-6` | Vertex model ID |
+| `GOOGLE_APPLICATION_CREDENTIALS` | When `vertex` | — | Path to GCP service account JSON key |
+| `CLAUDE_MODEL` | No | `claude-sonnet-4-5-20250929` | Anthropic direct API model ID |
 
 > **First run:** On startup, `bge-small-en-v1.5` (~24 MB) is auto-downloaded into `./models/`. This only happens once.
 

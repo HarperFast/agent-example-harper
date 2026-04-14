@@ -3,5 +3,7 @@ models/
 .env
 CONFIG.env
 *.env
-!.env.example
+!dot-env.example
 .DS_Store
+google-app-creds.json
+*-service-account*.json

@@ -1,6 +1,14 @@
-# Anthropic (required)
+#MUST USE ANTHROPIC OR GOOGLE VERTEX AI
+
+# Anthropic (Optional)
 ANTHROPIC_API_KEY=sk-ant-your-key-here
 CLAUDE_MODEL=claude-sonnet-4-5-20250514
+
+#Google Vertex AI (optional)
+LLM_PROVIDER=vertex
+VERTEX_PROJECT_ID=your-gcp-project
+VERTEX_REGION=global
+
 
 # Harper Fabric deployment (optional, only needed for deploy)
 # CLI_TARGET=https://your-instance.your-org.harperfabric.com:9925/

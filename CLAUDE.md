@@ -19,7 +19,7 @@ Live demo: https://agent-example.stephen-demo-org.harperfabric.com/Chat
 ## Tech Stack
 
 - **Runtime:** Harper (harperdb) — unified DB/cache/vector/API
-- **LLM:** Claude Sonnet via Anthropic SDK (`@anthropic-ai/sdk`)
+- **LLM:** Claude Sonnet via Anthropic SDK (`@anthropic-ai/sdk`) or Google Cloud Vertex AI (`@anthropic-ai/vertex-sdk`)
 - **Embeddings:** `bge-small-en-v1.5` running locally via `harper-fabric-embeddings` (llama.cpp) — no embedding API
 - **Web Search:** Anthropic's built-in server-side `web_search_20250305` tool
 - **Language:** JavaScript (ES modules, `"type": "module"`)
@@ -85,9 +85,25 @@ npm run deploy       # Deploy to Harper Fabric
 ## Environment Variables
 
 ```
-ANTHROPIC_API_KEY    # Required — Anthropic API key for Claude
-CLAUDE_MODEL         # Optional — defaults to claude-sonnet-4-5-20250514
+LLM_PROVIDER         # Optional — "anthropic" (default) or "vertex" (Google Cloud Vertex AI)
+ANTHROPIC_API_KEY    # Required when LLM_PROVIDER=anthropic — Anthropic API key
+CLAUDE_MODEL         # Optional — defaults to claude-sonnet-4-5-20250929 (anthropic) or claude-sonnet-4-5@20250929 (vertex)
+VERTEX_PROJECT_ID    # Required when LLM_PROVIDER=vertex — Google Cloud project ID
+VERTEX_REGION        # Optional — Vertex AI region, defaults to "global"
 ```
+
+### Vertex AI Setup
+
+To use Claude through Google Cloud Vertex AI instead of the direct Anthropic API:
+
+1. Set up GCP credentials: `gcloud auth application-default login`
+2. Configure env vars:
+   ```
+   LLM_PROVIDER=vertex
+   VERTEX_PROJECT_ID=my-gcp-project
+   VERTEX_REGION=global
+   ```
+3. Note: Vertex model IDs use `@` version suffixes (e.g. `claude-sonnet-4-5@20250929`) while direct API uses `-` (e.g. `claude-sonnet-4-5-20250929`)
 
 ## Common Tasks
 
