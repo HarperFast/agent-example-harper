@@ -148,7 +148,7 @@ function normalizeUrl(u) {
         return '';
     }
     if (!/^https?:\/\//i.test(s)) {
-        if (/^[\d.:$].test(s)/) {
+        if (/^[\d.:]/.test(s)) {
             s = `http://${s}`;
         } else {
             s = `https://${s}`;
