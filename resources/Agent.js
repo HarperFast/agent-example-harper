@@ -103,17 +103,16 @@ export class Agent extends Resource {
     // 4. Semantic cache — Harper-native HNSW vector search with distance threshold.
     const t4 = Date.now()
     let cachedReply = null
+    // Harper v5: vector search uses sort+target (v4 used conditions+target).
+    // v5 distance = negative cosine similarity: -1 = identical, 0 = orthogonal.
+    // Equivalent to v4's cosine distance < 0.12: distance < -(1 - 0.12) = -0.88
     const nearbyMsgs = tables.Message.search({
-      conditions: {
-        attribute: 'embedding',
-        comparator: 'lt',
-        value: CACHE_DISTANCE_THRESHOLD,
-        target: userEmbedding,
-      },
+      sort: { attribute: 'embedding', target: userEmbedding },
       limit: 10,
     })
 
     for await (const match of nearbyMsgs) {
+      if (match.distance >= -(1 - CACHE_DISTANCE_THRESHOLD)) break
       if (match.id === userMsgId || match.role !== 'user') continue
       const matchConvMsgs = []
       const matchHistory = tables.Message.search({
