@@ -1,4 +1,4 @@
-import { Resource, tables } from 'harperdb'
+import { Resource, tables } from 'harper'
 import Anthropic from '@anthropic-ai/sdk'
 import { AnthropicVertex } from '@anthropic-ai/vertex-sdk'
 import { config } from '../lib/config.js'

@@ -1,4 +1,4 @@
-import { Resource } from 'harperdb'
+import { Resource } from 'harper'
 
 // Harper brand palette
 // Edge Gray #383d40 | Cloud White #f5f5f5 | Quantum Purple #312556
