@@ -70,7 +70,7 @@ Cache hits return `cost.total: 0` and include a `cost.saved` field showing what 
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) 22+
-- [Harper CLI](https://www.npmjs.com/package/harperdb): `npm install -g harperdb`
+- [Harper CLI](https://www.npmjs.com/package/harper): `npm install -g harper`
 - **One of:**
   - [Anthropic API key](https://console.anthropic.com/) (direct API — default)
   - [Google Cloud project](https://console.cloud.google.com/) with Vertex AI enabled (GCP Vertex AI)
@@ -298,7 +298,7 @@ Rolling restarts and replication are handled automatically.
 | API server | Express / Fastify | Auto-generated from schema |
 | Chat UI server | Vite / Next.js | Resource returning `Response(html)` |
 | Embeddings | Voyage / OpenAI API | Local via `harper-fabric-embeddings` (24 MB, in-process) |
-| Deployment | Docker + K8s + cloud | `harperdb deploy .` |
+| Deployment | Docker + K8s + cloud | `harper deploy .` |
 
 **Key insights from building this:**
 
