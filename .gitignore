@@ -1,5 +1,4 @@
 node_modules/
-models/
 .env
 CONFIG.env
 *.env
