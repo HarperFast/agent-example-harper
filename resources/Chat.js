@@ -350,8 +350,8 @@ const HTML = /* html */ `<!DOCTYPE html>
 
           <!-- Local SLM box (inside Harper) -->
           <rect x="12" y="268" width="232" height="40" rx="5" fill="#2a2d30" stroke="rgba(167,139,250,0.5)" stroke-width="1"/>
-          <text x="128" y="284" text-anchor="middle" fill="#a78bfa" font-size="10" font-weight="600">Local SLM · bge-small-en-v1.5</text>
-          <text x="128" y="297" text-anchor="middle" fill="rgba(167,139,250,0.55)" font-size="8.5">embeddings run in Harper · no API cost</text>
+          <text x="128" y="284" text-anchor="middle" fill="#a78bfa" font-size="10" font-weight="600">Shared model · nomic-embed-text</text>
+          <text x="128" y="297" text-anchor="middle" fill="rgba(167,139,250,0.55)" font-size="8.5">scope.models.embed() · GPU on Fabric · no API cost</text>
 
           <!-- Harper box ends at y=350 -->
 
