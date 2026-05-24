@@ -5,6 +5,16 @@ const SYSTEM_PROMPT = `You are a helpful, concise assistant. Answer only the use
 Do NOT summarize, repeat, or reference prior conversation context in your response — use it silently \
 as background knowledge only if it is directly relevant. Never recite or recap previous answers.`
 
+// Hypothetical Claude Sonnet 4.5 pricing used to estimate what each generation
+// WOULD have cost if we'd called Anthropic instead of the local GPU. Real local
+// compute cost is roughly $0 (sunk-cost GPU); the dashboard shows what we're
+// saving by self-hosting + caching.
+const CLAUDE_COST_INPUT_PER_TOKEN  = 3  / 1_000_000  // $3  / 1M input tokens
+const CLAUDE_COST_OUTPUT_PER_TOKEN = 15 / 1_000_000  // $15 / 1M output tokens
+
+const estimateClaudeCost = (promptTokens, completionTokens) =>
+  promptTokens * CLAUDE_COST_INPUT_PER_TOKEN + completionTokens * CLAUDE_COST_OUTPUT_PER_TOKEN
+
 // Normalize text for embedding cache key — lowercase, strip punctuation, collapse whitespace
 const normalize = (s) =>
   s.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim()
@@ -103,13 +113,18 @@ export class Agent extends Resource {
     const timing = { embedMs: tEmbed, convMs: tConv, storeMs: tStore, cacheSearchMs: tCache }
     console.log('[Agent] timing:', JSON.stringify(timing))
 
-    // Return the cached answer — zero LLM call
+    // Return the cached answer — zero LLM call. We credit the original message's
+    // estimated cost to `totalSaved` so the dashboard shows the running benefit
+    // of the semantic cache (and self-hosting more broadly).
     if (cachedReply) {
+      let savedCost = 0
       try {
+        const origMsg = await tables.Message.get(cachedReply.id)
+        savedCost = origMsg?.cost ?? 0
         const stats = await tables.Stats.get('global')
         await tables.Stats.put({
           id: 'global',
-          totalSaved: stats?.totalSaved ?? 0,
+          totalSaved: (stats?.totalSaved ?? 0) + savedCost,
           cacheHits: ((stats?.cacheHits) ?? 0) + 1,
           updatedAt: new Date().toISOString(),
         })
@@ -121,6 +136,7 @@ export class Agent extends Resource {
           latencyMs: Date.now() - startTime,
           timing,
           tokens: { input: 0, output: 0, total: 0 },
+          cost: { input: 0, output: 0, total: 0, saved: savedCost },
           vectorContext: { hit: true, count: 1, cached: true },
         },
       }
@@ -146,8 +162,11 @@ export class Agent extends Resource {
     const assistantContent = result.content?.trim() ?? ''
     const promptTokens = result.usage?.promptTokens ?? 0
     const completionTokens = result.usage?.completionTokens ?? 0
+    const estimatedCost = estimateClaudeCost(promptTokens, completionTokens)
 
-    // 9. Store the assistant's response with its embedding
+    // 9. Store the assistant's response with its embedding. We persist the
+    //    *hypothetical* Claude cost so a future cache-hit on this same message
+    //    can credit that amount to `totalSaved`.
     const assistantMsgId = crypto.randomUUID()
     const assistantEmbedding = await cachedEmbed(assistantContent)
     await tables.Message.put({
@@ -155,6 +174,7 @@ export class Agent extends Resource {
       conversationId,
       role: 'assistant',
       content: assistantContent,
+      cost: estimatedCost,
       embedding: assistantEmbedding,
       createdAt: new Date().toISOString(),
     })
@@ -176,6 +196,13 @@ export class Agent extends Resource {
           output: completionTokens,
           total: promptTokens + completionTokens,
         },
+        cost: {
+          input: +(promptTokens * CLAUDE_COST_INPUT_PER_TOKEN).toFixed(6),
+          output: +(completionTokens * CLAUDE_COST_OUTPUT_PER_TOKEN).toFixed(6),
+          total: +estimatedCost.toFixed(6),
+          // `saved` is what cache hits credit; on a real generation it stays 0.
+          saved: 0,
+        },
         vectorContext: { hit: false, count: 0, cached: false },
       },
     }
@@ -187,6 +214,6 @@ export class PublicStats extends Resource {
 
   async get(target) {
     target.checkPermission = false
-    return await tables.Stats.get('global') ?? { id: 'global', cacheHits: 0 }
+    return await tables.Stats.get('global') ?? { id: 'global', totalSaved: 0, cacheHits: 0 }
   }
 }
