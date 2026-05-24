@@ -25,10 +25,11 @@ const normalize = (s) =>
   s.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim()
 
 // Cosine distance threshold for Harper's native HNSW vector search.
-// Harper uses cosine *distance* (0 = identical, 2 = opposite). 0.05 ≈ cosine
-// similarity 0.95 — strict enough that semantically different queries
-// ("describe the moon landing" vs "tell me about apollo 11") don't collide.
-const CACHE_DISTANCE_THRESHOLD = 0.05
+// Harper uses cosine *distance* (0 = identical, 2 = opposite). 0.15 ≈ cosine
+// similarity 0.85 — loose enough to catch rewordings and related phrasings
+// ("describe the moon landing" / "tell me about apollo 11"), tight enough
+// that the matched reply is reasonably on-topic.
+const CACHE_DISTANCE_THRESHOLD = 0.15
 
 // HNSW search returns matches that satisfy the threshold but doesn't guarantee
 // distance-ordered iteration. We compute distance ourselves and pick the closest.
