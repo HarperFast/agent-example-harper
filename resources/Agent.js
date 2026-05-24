@@ -12,6 +12,11 @@ as background knowledge only if it is directly relevant. Never recite or recap p
 const CLAUDE_COST_INPUT_PER_TOKEN  = 3  / 1_000_000  // $3  / 1M input tokens
 const CLAUDE_COST_OUTPUT_PER_TOKEN = 15 / 1_000_000  // $15 / 1M output tokens
 
+// scope.models.generate() returns only { content, finishReason } today — the
+// backend's token usage isn't surfaced to callers. Approximate with the
+// ~4-chars-per-token rule of thumb for English; close enough for a comparator.
+const estimateTokens = (text) => Math.max(1, Math.ceil((text?.length ?? 0) / 4))
+
 const estimateClaudeCost = (promptTokens, completionTokens) =>
   promptTokens * CLAUDE_COST_INPUT_PER_TOKEN + completionTokens * CLAUDE_COST_OUTPUT_PER_TOKEN
 
@@ -160,8 +165,8 @@ export class Agent extends Resource {
 
     const latencyMs = Date.now() - startTime
     const assistantContent = result.content?.trim() ?? ''
-    const promptTokens = result.usage?.promptTokens ?? 0
-    const completionTokens = result.usage?.completionTokens ?? 0
+    const promptTokens = estimateTokens(SYSTEM_PROMPT + message)
+    const completionTokens = estimateTokens(assistantContent)
     const estimatedCost = estimateClaudeCost(promptTokens, completionTokens)
 
     // 9. Store the assistant's response with its embedding. We persist the
