@@ -6,6 +6,10 @@ loadEnv:
 
 rest: true
 
+# Captures the Scope object so resources can call scope.models.embed().
+# See lib/modelCapture.js.
+extensionModule: 'lib/modelCapture.js'
+
 graphqlSchema:
   files: 'schemas/*.graphql'
 
