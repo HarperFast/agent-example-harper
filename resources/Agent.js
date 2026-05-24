@@ -25,9 +25,23 @@ const normalize = (s) =>
   s.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim()
 
 // Cosine distance threshold for Harper's native HNSW vector search.
-// Harper uses cosine *distance* (0 = identical, 2 = opposite), so this is
-// equivalent to cosine similarity >= 0.88 (distance = 1 - similarity = 0.12).
-const CACHE_DISTANCE_THRESHOLD = 0.12
+// Harper uses cosine *distance* (0 = identical, 2 = opposite). 0.05 ≈ cosine
+// similarity 0.95 — strict enough that semantically different queries
+// ("describe the moon landing" vs "tell me about apollo 11") don't collide.
+const CACHE_DISTANCE_THRESHOLD = 0.05
+
+// HNSW search returns matches that satisfy the threshold but doesn't guarantee
+// distance-ordered iteration. We compute distance ourselves and pick the closest.
+function cosineDistance(a, b) {
+  let dot = 0, na = 0, nb = 0
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i]
+    na += a[i] * a[i]
+    nb += b[i] * b[i]
+  }
+  const denom = Math.sqrt(na) * Math.sqrt(nb)
+  return denom === 0 ? 1 : 1 - dot / denom
+}
 
 // Get or compute an embedding, using Harper as a cache to skip the model on repeated text.
 async function cachedEmbed(text) {
@@ -85,6 +99,9 @@ export class Agent extends Resource {
     const tStore = Date.now() - t3
 
     // 4. Semantic cache — Harper-native HNSW vector search with distance threshold.
+    //    HNSW search returns matches under the threshold but iteration order isn't
+    //    guaranteed to be distance-ascending, so we collect candidates, compute
+    //    cosine distance ourselves, and pick the closest valid one.
     const t4 = Date.now()
     let cachedReply = null
     const nearbyMsgs = tables.Message.search({
@@ -94,11 +111,17 @@ export class Agent extends Resource {
         value: CACHE_DISTANCE_THRESHOLD,
         target: userEmbedding,
       },
-      limit: 10,
+      limit: 20,
     })
 
+    const candidates = []
     for await (const match of nearbyMsgs) {
-      if (match.id === userMsgId || match.role !== 'user') continue
+      if (match.id === userMsgId || match.role !== 'user' || !match.embedding) continue
+      candidates.push({ match, distance: cosineDistance(userEmbedding, match.embedding) })
+    }
+    candidates.sort((a, b) => a.distance - b.distance)
+
+    for (const { match } of candidates) {
       const matchConvMsgs = []
       const matchHistory = tables.Message.search({
         conditions: [{ attribute: 'conversationId', value: match.conversationId }],
