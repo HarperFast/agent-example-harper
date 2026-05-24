@@ -121,17 +121,8 @@ export class Agent extends Resource {
     }
     candidates.sort((a, b) => a.distance - b.distance)
 
-    // Debug: print what the search returned along with the actual computed distance.
-    // Harper's HNSW `lt` filter doesn't always cull things outside the threshold,
+    // Harper's HNSW `lt` filter doesn't always cull matches outside the threshold,
     // so we apply a hard check using the distance we computed ourselves.
-    if (candidates.length > 0) {
-      console.log('[Agent] cache candidates:', candidates.slice(0, 5).map((c) => ({
-        id: c.match.id,
-        role: c.match.role,
-        dist: +c.distance.toFixed(4),
-        content: c.match.content?.slice(0, 60),
-      })))
-    }
     const filtered = candidates.filter((c) => c.distance <= CACHE_DISTANCE_THRESHOLD)
 
     for (const { match } of filtered) {
@@ -143,9 +134,14 @@ export class Agent extends Resource {
       for await (const m of matchHistory) matchConvMsgs.push(m)
       matchConvMsgs.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       const midx = matchConvMsgs.findIndex((m) => m.id === match.id)
-      const reply = matchConvMsgs.slice(midx + 1).find((m) => m.role === 'assistant')
-      if (reply) {
-        cachedReply = reply
+      // The matched message's reply must be the IMMEDIATELY following message.
+      // `.find()` would walk past any subsequent user-msgs (cache hits that didn't
+      // generate a reply) and pull an unrelated answer from much later in the
+      // conversation — e.g. matching "is soccer fun" but returning the assistant
+      // reply to a later "what is 2 plus 3" question in the same conversation.
+      const next = matchConvMsgs[midx + 1]
+      if (next?.role === 'assistant') {
+        cachedReply = next
         break
       }
     }
