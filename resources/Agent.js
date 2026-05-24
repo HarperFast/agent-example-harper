@@ -121,7 +121,20 @@ export class Agent extends Resource {
     }
     candidates.sort((a, b) => a.distance - b.distance)
 
-    for (const { match } of candidates) {
+    // Debug: print what the search returned along with the actual computed distance.
+    // Harper's HNSW `lt` filter doesn't always cull things outside the threshold,
+    // so we apply a hard check using the distance we computed ourselves.
+    if (candidates.length > 0) {
+      console.log('[Agent] cache candidates:', candidates.slice(0, 5).map((c) => ({
+        id: c.match.id,
+        role: c.match.role,
+        dist: +c.distance.toFixed(4),
+        content: c.match.content?.slice(0, 60),
+      })))
+    }
+    const filtered = candidates.filter((c) => c.distance <= CACHE_DISTANCE_THRESHOLD)
+
+    for (const { match } of filtered) {
       const matchConvMsgs = []
       const matchHistory = tables.Message.search({
         conditions: [{ attribute: 'conversationId', value: match.conversationId }],
