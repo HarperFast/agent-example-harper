@@ -1,39 +1,9 @@
 import { Resource, tables } from 'harperdb'
-import Anthropic from '@anthropic-ai/sdk'
-import { AnthropicVertex } from '@anthropic-ai/vertex-sdk'
-import { config } from '../lib/config.js'
 import { embed } from '../lib/embeddings.js'
-
-let _client
-const getClient = () => {
-  if (_client) return _client
-  if (config.provider() === 'vertex') {
-    _client = new AnthropicVertex({
-      projectId: config.vertex.projectId(),
-      region: config.vertex.region(),
-    })
-  } else {
-    _client = new Anthropic({ apiKey: config.anthropic.apiKey() })
-  }
-  return _client
-}
-
-const getModel = () =>
-  config.provider() === 'vertex' ? config.vertex.model() : config.anthropic.model()
 
 const SYSTEM_PROMPT = `You are a helpful, concise assistant. Answer only the user's current question. \
 Do NOT summarize, repeat, or reference prior conversation context in your response — use it silently \
 as background knowledge only if it is directly relevant. Never recite or recap previous answers.`
-
-// Approximate pricing for Claude Sonnet 4.5 (per token)
-const COST_INPUT_PER_TOKEN  = 3  / 1_000_000  // $3  / 1M input tokens
-const COST_OUTPUT_PER_TOKEN = 15 / 1_000_000  // $15 / 1M output tokens
-const COST_PER_WEB_SEARCH   = 10 / 1_000      // $10 / 1K searches
-
-// Anthropic web search tool — executed server-side, no external API key needed.
-// Not available on Vertex AI without an org policy change.
-const WEB_SEARCH_TOOL = { type: 'web_search_20250305', name: 'web_search', max_uses: 5 }
-const isVertex = () => config.provider() === 'vertex'
 
 // Normalize text for embedding cache key — lowercase, strip punctuation, collapse whitespace
 const normalize = (s) =>
@@ -44,8 +14,7 @@ const normalize = (s) =>
 // equivalent to cosine similarity >= 0.88 (distance = 1 - similarity = 0.12).
 const CACHE_DISTANCE_THRESHOLD = 0.12
 
-// Get or compute an embedding, using Harper as a cache to skip the SLM on repeated text.
-// On Fabric, the SLM takes ~2.3s per embedding — this cache makes repeat queries instant.
+// Get or compute an embedding, using Harper as a cache to skip the model on repeated text.
 async function cachedEmbed(text) {
   const key = normalize(text)
   const cached = await tables.EmbeddingCache.get(key)
@@ -134,23 +103,17 @@ export class Agent extends Resource {
     const timing = { embedMs: tEmbed, convMs: tConv, storeMs: tStore, cacheSearchMs: tCache }
     console.log('[Agent] timing:', JSON.stringify(timing))
 
-    // Return the cached answer — zero LLM cost
+    // Return the cached answer — zero LLM call
     if (cachedReply) {
-      const t5 = Date.now()
-      let savedCost = 0
       try {
-        const origMsg = await tables.Message.get(cachedReply.id)
-        savedCost = origMsg?.cost ?? 0
         const stats = await tables.Stats.get('global')
         await tables.Stats.put({
           id: 'global',
-          totalSaved: ((stats?.totalSaved) ?? 0) + savedCost,
-          cacheHits:  ((stats?.cacheHits)  ?? 0) + 1,
-          updatedAt:  new Date().toISOString(),
+          totalSaved: stats?.totalSaved ?? 0,
+          cacheHits: ((stats?.cacheHits) ?? 0) + 1,
+          updatedAt: new Date().toISOString(),
         })
       } catch {}
-      const tStats = Date.now() - t5
-      console.log('[Agent] cache hit stats update:', tStats + 'ms')
       return {
         conversationId,
         message: { role: 'assistant', content: cachedReply.content },
@@ -158,66 +121,40 @@ export class Agent extends Resource {
           latencyMs: Date.now() - startTime,
           timing,
           tokens: { input: 0, output: 0, total: 0 },
-          cost:   { input: 0, output: 0, total: 0, saved: savedCost },
           vectorContext: { hit: true, count: 1, cached: true },
         },
       }
     }
 
-    // 5. Call Claude with web search enabled — standalone question, no conversation history.
-    //    Anthropic executes searches server-side, no external search API or key required.
-    const messages = [{ role: 'user', content: message }]
-
-    const tools = isVertex() ? [] : [WEB_SEARCH_TOOL]
-
-    let apiResponse = await getClient().messages.create({
-      model: getModel(),
-      max_tokens: 1024,
-      ...(tools.length && { tools }),
-      system: SYSTEM_PROMPT,
-      messages,
-    })
-
-    // Handle pause_turn — server hit the max_uses limit mid-response; continue once
-    if (apiResponse.stop_reason === 'pause_turn') {
-      apiResponse = await getClient().messages.create({
-        model: getModel(),
-        max_tokens: 1024,
-        ...(tools.length && { tools }),
-        system: SYSTEM_PROMPT,
-        messages: [...messages, { role: 'assistant', content: apiResponse.content }],
-      })
+    // 5. Generate via scope.models.generate() — routes to whatever backend the host
+    //    has configured for `models.generative.default` (vLLM on Fabric GPU hosts,
+    //    Ollama / OpenAI / Anthropic on other deployments).
+    const scope = globalThis.harperScope
+    if (!scope) {
+      throw new Error('Harper scope not yet captured — modelCapture plugin must run before first generate call')
     }
 
+    const result = await scope.models.generate(
+      {
+        messages: [{ role: 'user', content: message }],
+        system: SYSTEM_PROMPT,
+      },
+      { maxTokens: 1024 },
+    )
+
     const latencyMs = Date.now() - startTime
-
-    // The API can split the answer across multiple text blocks (sentence fragments joined
-    // without separators) and may emit a text block BEFORE the web search tool call.
-    // Strategy: find the last non-text block (tool use / search result) and take only the
-    // text blocks that follow it — these form the actual answer. Join with '' since the
-    // fragments are already continuous prose. Falls back to all text blocks if no tools used.
-    const lastToolIdx = apiResponse.content.reduce((acc, b, i) => b.type !== 'text' ? i : acc, -1)
-    const assistantContent = apiResponse.content
-      .slice(lastToolIdx + 1)
-      .filter((b) => b.type === 'text')
-      .map((b) => b.text)
-      .join('')
-      .trim()
-
-    const { input_tokens, output_tokens } = apiResponse.usage
-    const webSearches = apiResponse.usage?.server_tool_use?.web_search_requests ?? 0
+    const assistantContent = result.content?.trim() ?? ''
+    const promptTokens = result.usage?.promptTokens ?? 0
+    const completionTokens = result.usage?.completionTokens ?? 0
 
     // 9. Store the assistant's response with its embedding
     const assistantMsgId = crypto.randomUUID()
     const assistantEmbedding = await cachedEmbed(assistantContent)
-    const searchCost = webSearches * COST_PER_WEB_SEARCH
-    const totalCost = (input_tokens * COST_INPUT_PER_TOKEN) + (output_tokens * COST_OUTPUT_PER_TOKEN) + searchCost
     await tables.Message.put({
       id: assistantMsgId,
       conversationId,
       role: 'assistant',
       content: assistantContent,
-      cost: totalCost,
       embedding: assistantEmbedding,
       createdAt: new Date().toISOString(),
     })
@@ -233,18 +170,12 @@ export class Agent extends Resource {
       message: { role: 'assistant', content: assistantContent },
       meta: {
         latencyMs,
+        timing,
         tokens: {
-          input:  input_tokens,
-          output: output_tokens,
-          total:  input_tokens + output_tokens,
+          input: promptTokens,
+          output: completionTokens,
+          total: promptTokens + completionTokens,
         },
-        cost: {
-          input:   +(input_tokens  * COST_INPUT_PER_TOKEN).toFixed(6),
-          output:  +(output_tokens * COST_OUTPUT_PER_TOKEN).toFixed(6),
-          search:  +searchCost.toFixed(6),
-          total:   +totalCost.toFixed(6),
-        },
-        webSearches,
         vectorContext: { hit: false, count: 0, cached: false },
       },
     }
@@ -256,6 +187,6 @@ export class PublicStats extends Resource {
 
   async get(target) {
     target.checkPermission = false
-    return await tables.Stats.get('global') ?? { id: 'global', totalSaved: 0, cacheHits: 0 }
+    return await tables.Stats.get('global') ?? { id: 'global', cacheHits: 0 }
   }
 }
