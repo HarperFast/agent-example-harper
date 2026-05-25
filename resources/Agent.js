@@ -56,13 +56,12 @@ async function cachedEmbed(text) {
 }
 
 export class Agent extends Resource {
-  static loadAsInstance = false
-
   // POST /Agent — send a message, get a response
-  async post(target, data) {
+  static async post(target, data) {
     target.checkPermission = false
     const startTime = Date.now()
-    const { message, conversationId: existingId } = data || {}
+    const body = await data
+    const { message, conversationId: existingId } = body || {}
     if (!message) {
       const err = new Error('Missing required field: message')
       err.statusCode = 400
@@ -252,9 +251,7 @@ export class Agent extends Resource {
 }
 
 export class PublicStats extends Resource {
-  static loadAsInstance = false
-
-  async get(target) {
+  static async get(target) {
     target.checkPermission = false
     return await tables.Stats.get('global') ?? { id: 'global', totalSaved: 0, cacheHits: 0 }
   }

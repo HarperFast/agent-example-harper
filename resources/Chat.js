@@ -551,8 +551,7 @@ const HTML = /* html */ `<!DOCTYPE html>
 </html>`
 
 export class Chat extends Resource {
-  static loadAsInstance = false
-  get(target) {
+  static get(target) {
     target.checkPermission = false
     return new Response(HTML, {
       headers: { 'Content-Type': 'text/html; charset=utf-8' },
