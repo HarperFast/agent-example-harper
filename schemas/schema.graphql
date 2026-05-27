@@ -26,3 +26,35 @@ type Stats @table @export {
   cacheHits: Int
   updatedAt: String
 }
+
+# DocChunk: one heading-bounded chunk of a docs.harperdb.io page, indexed
+# semantically for retrieval-augmented generation. Ingestion follows the
+# manifest at https://docs.harperdb.io/llms.txt — each listed page is fetched
+# as raw markdown, split by H2/H3 headings, embedded, and stored here.
+#
+# `id` = stable hash of (sourceUrl + chunk index), so re-ingestion is idempotent
+# `headingPath` = "H1 > H2 > H3" breadcrumb, surfaced to the LLM for context
+# `embedding`   = vector from scope.models.embed() with HNSW + cosine distance
+type DocChunk @table @export {
+  id: ID @primaryKey
+  sourceUrl: String @indexed
+  title: String
+  headingPath: String
+  content: String
+  charCount: Int
+  embedding: [Float] @indexed(type: "HNSW", distance: "cosine")
+  ingestedAt: String
+}
+
+# IngestRun: one row per ingestion job, useful for "when did we last refresh?"
+# and surfacing progress / failures back to the operator.
+type IngestRun @table @export {
+  id: ID @primaryKey         # ISO timestamp of the run
+  status: String             # pending | running | complete | failed
+  pageCount: Int
+  chunkCount: Int
+  errorCount: Int
+  startedAt: String
+  finishedAt: String
+  notes: String
+}

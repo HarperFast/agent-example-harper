@@ -1,9 +1,30 @@
 import { Resource, tables } from 'harperdb'
 import { embed } from '../lib/embeddings.js'
+import { searchDocs } from './DocsSearch.js'
 
-const SYSTEM_PROMPT = `You are a helpful, concise assistant. Answer only the user's current question. \
-Do NOT summarize, repeat, or reference prior conversation context in your response — use it silently \
+// Base assistant prompt — used when no RAG context is available (no docs
+// ingested yet, or the user asks something off-topic that surfaces no
+// relevant chunks).
+const BASE_SYSTEM_PROMPT = `You are a helpful, concise assistant for the Harper database / Fabric platform. \
+Answer only the user's current question. Do NOT summarize, repeat, or reference prior conversation context in your response — use it silently \
 as background knowledge only if it is directly relevant. Never recite or recap previous answers.`
+
+// RAG variant — used when DocsSearch returned at least one chunk. The model
+// is instructed to ground its answer in the supplied context AND to cite the
+// source URLs it relied on, so users can verify the docs claim themselves.
+const RAG_SYSTEM_PREFIX = `You are a documentation assistant for Harper (a database / streaming / Fabric platform). \
+Answer the user's question using the Harper documentation excerpts provided below as your primary source. \
+If the excerpts don't contain a clear answer, say so plainly — do not invent details. \
+Cite the source URLs you relied on at the end of your answer in the form "Sources: <url>, <url>".\n\nDocumentation excerpts:`
+
+// Top-K chunks retrieved from DocChunk on each generate call. Five is a
+// reasonable starting point: enough to cover related sub-topics, not so many
+// that the prompt explodes past the model's effective context window.
+const RAG_TOP_K = 5
+// Reject doc chunks above this cosine distance — anything further away is
+// almost certainly noise that would distract the model rather than help.
+// Calibrate as we see retrieval quality on real questions.
+const RAG_MAX_DISTANCE = 0.6
 
 // Hypothetical Claude Sonnet 4.5 pricing used to estimate what each generation
 // WOULD have cost if we'd called Anthropic instead of the local GPU. Real local
@@ -180,7 +201,30 @@ export class Agent extends Resource {
       }
     }
 
-    // 5. Generate via scope.models.generate() — routes to whatever backend the host
+    // 5. Retrieve relevant Harper-doc chunks for RAG. Uses the already-computed
+    //    `userEmbedding` indirectly: searchDocs re-embeds the query for its own
+    //    `headingPath\n\ncontent` input shape — minor duplication, big retrieval-
+    //    quality win because the chunks were embedded with their breadcrumb too.
+    //    On corpus-empty (ingest not yet run) or no-results, we fall through to
+    //    the non-RAG prompt — the chat still works, it just won't cite docs.
+    const tRag = Date.now()
+    let ragResults = []
+    try {
+      const out = await searchDocs(message, { k: RAG_TOP_K, maxDistance: RAG_MAX_DISTANCE })
+      ragResults = out.results ?? []
+    } catch (err) {
+      // RAG is best-effort — log and continue with the plain prompt rather than
+      // failing the whole chat turn over a search hiccup.
+      console.warn('[Agent] RAG search failed:', err.message)
+    }
+    const ragMs = Date.now() - tRag
+    timing.ragMs = ragMs
+
+    const systemPrompt = ragResults.length > 0
+      ? buildRagSystemPrompt(ragResults)
+      : BASE_SYSTEM_PROMPT
+
+    // 6. Generate via scope.models.generate() — routes to whatever backend the host
     //    has configured for `models.generative.default` (vLLM on Fabric GPU hosts,
     //    Ollama / OpenAI / Anthropic on other deployments).
     const scope = globalThis.harperScope
@@ -191,7 +235,7 @@ export class Agent extends Resource {
     const result = await scope.models.generate(
       {
         messages: [{ role: 'user', content: message }],
-        system: SYSTEM_PROMPT,
+        system: systemPrompt,
       },
       { maxTokens: 1024 },
     )
@@ -242,9 +286,39 @@ export class Agent extends Resource {
           saved: 0,
         },
         vectorContext: { hit: false, count: 0, cached: false },
+        rag: ragResults.length > 0
+          ? {
+              count: ragResults.length,
+              sources: ragResults.map((r) => ({
+                url: humanizeDocUrl(r.sourceUrl),
+                title: r.title,
+                headingPath: r.headingPath,
+                distance: +r.distance.toFixed(4),
+              })),
+            }
+          : { count: 0, sources: [] },
       },
     }
   }
+}
+
+// Format the retrieved chunks for the system prompt. Each chunk is delimited
+// so the model can tell where one excerpt ends and the next begins, and we
+// include the source URL inline so the model has somewhere natural to cite
+// from. Total length is bounded by the chunk MAX_CHARS × RAG_TOP_K.
+function buildRagSystemPrompt(results) {
+  const blocks = results.map((r, i) => {
+    const url = humanizeDocUrl(r.sourceUrl)
+    const breadcrumb = r.headingPath ? ` — ${r.headingPath}` : ''
+    return `[#${i + 1}] ${r.title}${breadcrumb}\nSource: ${url}\n\n${r.content}`
+  })
+  return `${RAG_SYSTEM_PREFIX}\n\n${blocks.join('\n\n---\n\n')}`
+}
+
+// llms.txt links point at the .md sources; rewrite to the human-browsable
+// URL for citation display. e.g. /reference/v4/database/schema.md → /reference/v4/database/schema
+function humanizeDocUrl(url) {
+  return url?.replace(/\.md$/, '') ?? url
 }
 
 export class PublicStats extends Resource {
