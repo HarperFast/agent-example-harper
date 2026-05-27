@@ -242,7 +242,7 @@ export class Agent extends Resource {
 
     const latencyMs = Date.now() - startTime
     const assistantContent = result.content?.trim() ?? ''
-    const promptTokens = estimateTokens(SYSTEM_PROMPT + message)
+    const promptTokens = estimateTokens(systemPrompt + message)
     const completionTokens = estimateTokens(assistantContent)
     const estimatedCost = estimateClaudeCost(promptTokens, completionTokens)
 

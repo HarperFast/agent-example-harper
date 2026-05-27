@@ -19,22 +19,34 @@ import { embed } from '../lib/embeddings.js';
 export class DocsSearch extends Resource {
 	static loadAsInstance = false;
 
+	// Both GET (q in path: /DocsSearch/<query>) and POST (q in JSON body) work.
+	// POST is the safer external-tooling shape — no URL-encoding gotchas with
+	// query strings containing spaces or special chars; the body also carries
+	// `k` and `maxDistance` directly. Agent.js imports `searchDocs()` and
+	// bypasses HTTP entirely, so this surface is for ad-hoc external use.
 	async get(target) {
 		target.checkPermission = false;
-
-		// Resource params come through differently depending on the harper
-		// version; both target.searchParams (URL-style) and target.id (path
-		// param) are supported by older example code. Use whichever surfaces.
-		const q = target.searchParams?.get?.('q') ?? target.id;
+		const q = target.id;
 		if (!q) {
-			const err = new Error('Missing required query parameter: q');
+			const err = new Error('Missing query — POST a JSON body { q, k?, maxDistance? } or GET /DocsSearch/<query>');
 			err.statusCode = 400;
 			throw err;
 		}
-		const k = clampInt(target.searchParams?.get?.('k'), 5, 1, 25);
-		const maxDistance = parseFloat(target.searchParams?.get?.('maxDistance')) || null;
+		return await searchDocs(decodeURIComponent(q), {});
+	}
 
-		return await searchDocs(q, { k, maxDistance });
+	async post(target, data) {
+		target.checkPermission = false;
+		const q = data?.q;
+		if (!q) {
+			const err = new Error('Missing required field: q');
+			err.statusCode = 400;
+			throw err;
+		}
+		return await searchDocs(q, {
+			k: clampInt(data?.k, 5, 1, 25),
+			maxDistance: typeof data?.maxDistance === 'number' ? data.maxDistance : null,
+		});
 	}
 }
 
