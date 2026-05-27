@@ -197,6 +197,63 @@ const HTML = /* html */ `<!DOCTYPE html>
     .meta .pill.cache-hit .label { opacity: 1; }
     .meta .pill.web-search  { color: #a78bfa; }
     .meta .pill.web-search .label { color: #a78bfa; opacity: 1; }
+    .meta .pill.rag-hit     { color: #66ffcc; }
+    .meta .pill.rag-hit .label { color: #66ffcc; opacity: 1; }
+    .meta .pill.rag-miss    { color: var(--muted); }
+    .meta .pill.rag-miss .label { color: var(--muted); }
+
+    /* RAG source citations under each grounded assistant reply */
+    .meta.rag-sources {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 0.25rem;
+      margin-top: 0.35rem;
+      max-width: 95%;
+    }
+    .meta.rag-sources .rag-header {
+      font-size: 0.72rem;
+      color: var(--btree-green);
+      opacity: 0.85;
+      font-weight: 600;
+      letter-spacing: 0.02em;
+    }
+    .meta.rag-sources .rag-link {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+      padding: 0.3rem 0.55rem;
+      border-radius: 5px;
+      background: rgba(102,255,204,0.06);
+      border: 1px solid rgba(102,255,204,0.18);
+      color: var(--cloud-white);
+      font-size: 0.74rem;
+      text-decoration: none;
+      transition: background 0.12s ease, border-color 0.12s ease;
+    }
+    .meta.rag-sources .rag-link:hover {
+      background: rgba(102,255,204,0.13);
+      border-color: rgba(102,255,204,0.42);
+    }
+    .meta.rag-sources .rag-num {
+      flex-shrink: 0;
+      width: 1.2rem;
+      height: 1.2rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 50%;
+      background: rgba(102,255,204,0.18);
+      color: var(--btree-green);
+      font-weight: 600;
+      font-size: 0.66rem;
+    }
+    .meta.rag-sources .rag-dist {
+      margin-left: auto;
+      flex-shrink: 0;
+      color: var(--muted);
+      font-size: 0.66rem;
+      font-family: 'Source Code Pro', monospace;
+    }
 
     /* ── Typing indicator ───────────────────────────────── */
     .typing-wrap { align-self: flex-start; }
@@ -274,7 +331,7 @@ const HTML = /* html */ `<!DOCTYPE html>
 <header>
   <img src="${LOGO_URI}" alt="harper" />
   <div class="header-divider"></div>
-  <span class="header-sub">Demo Agent</span>
+  <span class="header-sub">Docs RAG Demo — local Qwen + Harper vector search</span>
   <span id="conv-badge"></span>
   <span id="mobile-savings">$0.0000 saved</span>
   <button id="sidebar-toggle" onclick="toggleSidebar()">⚡ Info</button>
@@ -288,7 +345,7 @@ const HTML = /* html */ `<!DOCTYPE html>
     <div id="diagram-section">
       <div class="panel-label">Architecture</div>
       <div id="diagram">
-        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 430" style="font-family:Ubuntu,sans-serif;">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 360" style="font-family:Ubuntu,sans-serif;">
           <defs>
             <marker id="ah" markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto">
               <path d="M0,0 L0,7 L7,3.5 z" fill="rgba(255,255,255,0.22)"/>
@@ -308,7 +365,7 @@ const HTML = /* html */ `<!DOCTYPE html>
           <!-- Arrow: User → Harper -->
           <line x1="130" y1="32" x2="130" y2="50" stroke="rgba(255,255,255,0.22)" stroke-width="1.5" marker-end="url(#ah)"/>
 
-          <!-- HARPER outer container — Agent + DB + SLM all live here -->
+          <!-- HARPER outer container — Agent + DB + local inference all live here -->
           <rect x="4" y="52" width="252" height="298" rx="7" fill="rgba(102,255,204,0.04)" stroke="#66ffcc" stroke-width="1.5"/>
           <text x="130" y="67" text-anchor="middle" fill="#66ffcc" font-size="9" font-weight="700" letter-spacing="0.1em">HARPER</text>
 
@@ -320,53 +377,45 @@ const HTML = /* html */ `<!DOCTYPE html>
           <!-- Arrow: Agent → Vector/Cache -->
           <line x1="128" y1="106" x2="128" y2="120" stroke="rgba(255,255,255,0.22)" stroke-width="1.5" marker-end="url(#ah)"/>
 
-          <!-- Vector Store (inside Harper) -->
+          <!-- Docs RAG (left, inside Harper) -->
           <rect x="12" y="122" width="108" height="66" rx="5" fill="#2a2d30" stroke="rgba(102,255,204,0.28)" stroke-width="1"/>
-          <text x="66" y="140" text-anchor="middle" fill="#f5f5f5" font-size="10" font-weight="500">Vector Store</text>
-          <text x="66" y="154" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">HNSW Index</text>
-          <text x="66" y="167" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">semantic context</text>
-          <text x="66" y="180" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">for responses</text>
+          <text x="66" y="140" text-anchor="middle" fill="#f5f5f5" font-size="10" font-weight="500">Docs RAG</text>
+          <text x="66" y="154" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">HNSW · docs.harperdb.io</text>
+          <text x="66" y="167" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">~2000 indexed chunks</text>
+          <text x="66" y="180" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">grounded answers</text>
 
-          <!-- Semantic Cache (inside Harper) -->
+          <!-- Semantic Cache (right, inside Harper) -->
           <rect x="138" y="122" width="110" height="66" rx="5" fill="#2a2d30" stroke="rgba(102,255,204,0.28)" stroke-width="1"/>
           <text x="193" y="140" text-anchor="middle" fill="#f5f5f5" font-size="10" font-weight="500">Semantic Cache</text>
-          <text x="193" y="154" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">cosine sim &gt;= 0.88</text>
+          <text x="193" y="154" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">cosine sim &gt;= 0.85</text>
           <text x="193" y="167" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">instant answers</text>
           <text x="193" y="180" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">$0 LLM cost</text>
 
-          <!-- Cache miss arrow (left, exits Harper) -->
+          <!-- Cache miss → continues down to generate -->
           <line x1="66" y1="188" x2="66" y2="204" stroke="rgba(255,255,255,0.22)" stroke-width="1.5" marker-end="url(#ah)"/>
-          <text x="46" y="200" text-anchor="middle" fill="rgba(255,255,255,0.28)" font-size="8">miss</text>
+          <text x="46" y="200" text-anchor="middle" fill="rgba(255,255,255,0.28)" font-size="8">retrieve</text>
 
-          <!-- Cache hit arrow (right, stays in Harper) -->
+          <!-- Cache hit (right, stays in Harper) -->
           <line x1="193" y1="188" x2="193" y2="204" stroke="#66ffcc" stroke-width="1.5" marker-end="url(#ah-g)"/>
           <text x="214" y="200" text-anchor="middle" fill="#66ffcc" font-size="8" opacity="0.75">hit</text>
 
           <!-- Cache Response box (inside Harper) -->
           <rect x="138" y="206" width="110" height="48" rx="5" fill="rgba(102,255,204,0.07)" stroke="#66ffcc" stroke-width="1.5"/>
-          <text x="193" y="224" text-anchor="middle" fill="#66ffcc" font-size="10" font-weight="600">Harper Cache</text>
+          <text x="193" y="224" text-anchor="middle" fill="#66ffcc" font-size="10" font-weight="600">Cached</text>
           <text x="193" y="238" text-anchor="middle" fill="#66ffcc" font-size="10" font-weight="600">Response</text>
           <text x="193" y="249" text-anchor="middle" fill="rgba(102,255,204,0.55)" font-size="8">$0.00 &bull; &lt;50ms</text>
 
-          <!-- Local SLM box (inside Harper) -->
-          <rect x="12" y="268" width="232" height="40" rx="5" fill="#2a2d30" stroke="rgba(167,139,250,0.5)" stroke-width="1"/>
-          <text x="128" y="284" text-anchor="middle" fill="#a78bfa" font-size="10" font-weight="600">Shared model · nomic-embed-text</text>
-          <text x="128" y="297" text-anchor="middle" fill="rgba(167,139,250,0.55)" font-size="8.5">scope.models.embed() · GPU on Fabric · no API cost</text>
+          <!-- Local models box (inside Harper) — both embed and generate -->
+          <rect x="12" y="262" width="232" height="80" rx="5" fill="#2a2d30" stroke="rgba(167,139,250,0.5)" stroke-width="1"/>
+          <text x="128" y="278" text-anchor="middle" fill="#a78bfa" font-size="10" font-weight="600">Local inference · vLLM on GPU</text>
+          <text x="128" y="294" text-anchor="middle" fill="rgba(167,139,250,0.62)" font-size="8.5">scope.models.embed() · nomic-embed-text</text>
+          <text x="128" y="308" text-anchor="middle" fill="rgba(167,139,250,0.62)" font-size="8.5">scope.models.generate() · Qwen2.5-7B-Instruct</text>
+          <text x="128" y="328" text-anchor="middle" fill="rgba(167,139,250,0.42)" font-size="8">no external API · zero per-token cost</text>
 
-          <!-- Harper box ends at y=350 -->
-
-          <!-- Arrow: cache miss exits Harper → Claude (outside) -->
-          <line x1="66" y1="206" x2="66" y2="370" stroke="rgba(255,255,255,0.22)" stroke-width="1.5" marker-end="url(#ah)"/>
-
-          <!-- Claude Sonnet box (EXTERNAL — below Harper) -->
-          <rect x="4" y="372" width="252" height="50" rx="6" fill="#312556" stroke="#7a3a87" stroke-width="1"/>
-          <text x="9" y="386" fill="rgba(255,255,255,0.3)" font-size="7" font-weight="500" font-style="italic">external</text>
-          <text x="128" y="390" text-anchor="middle" fill="#f5f5f5" font-size="10" font-weight="500">Claude Sonnet · Web Search</text>
-          <text x="128" y="404" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-size="8.5">Anthropic API · response embedded by local SLM</text>
-
-          <!-- Arrow: Claude → SLM in Harper -->
-          <line x1="128" y1="352" x2="128" y2="372" stroke="rgba(167,139,250,0.7)" stroke-width="1.5" marker-end="url(#ah-d)"/>
-          <text x="128" y="364" text-anchor="middle" fill="rgba(167,139,250,0.5)" font-size="7.5">embed &amp; store in Harper</text>
+          <!-- Arrow into local models -->
+          <line x1="66" y1="206" x2="66" y2="260" stroke="rgba(255,255,255,0.22)" stroke-width="1.5" marker-end="url(#ah)"/>
+          <text x="46" y="232" text-anchor="middle" fill="rgba(255,255,255,0.28)" font-size="8">+RAG</text>
+          <text x="46" y="244" text-anchor="middle" fill="rgba(255,255,255,0.28)" font-size="8">context</text>
         </svg>
       </div>
     </div>
@@ -438,10 +487,38 @@ const HTML = /* html */ `<!DOCTYPE html>
     bubble.className = 'bubble'
     bubble.innerHTML = renderMarkdown(content)
     wrap.appendChild(bubble)
-    if (meta) wrap.appendChild(buildMeta(meta))
+    if (meta) {
+      wrap.appendChild(buildMeta(meta))
+      const sources = buildRagSources(meta.rag)
+      if (sources) wrap.appendChild(sources)
+    }
     chat.appendChild(wrap)
     scrollBottom()
     return wrap
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))
+  }
+
+  // RAG sources cited under the assistant reply. Linked to the human-browsable
+  // docs.harperdb.io URL so the reader can verify the chunk in context.
+  function buildRagSources(rag) {
+    if (!rag || !rag.count) return null
+    const div = document.createElement('div')
+    div.className = 'meta rag-sources'
+    const items = rag.sources.map((s, i) => {
+      const label = s.headingPath
+        ? escapeHtml(s.title) + ' — ' + escapeHtml(s.headingPath)
+        : escapeHtml(s.title)
+      return '<a class="rag-link" href="' + escapeHtml(s.url) + '" target="_blank" rel="noopener noreferrer">' +
+        '<span class="rag-num">' + (i + 1) + '</span>' + label +
+        '<span class="rag-dist">d=' + s.distance.toFixed(2) + '</span></a>'
+    }).join('')
+    div.innerHTML =
+      '<span class="rag-header">Grounded in ' + rag.count + ' doc chunk' + (rag.count === 1 ? '' : 's') + ':</span>' +
+      items
+    return div
   }
 
   function buildMeta(meta) {
@@ -457,20 +534,24 @@ const HTML = /* html */ `<!DOCTYPE html>
         '<span class="pill cache-hit"><span class="label">Cache</span>Served from Harper semantic cache — $0.00 · 0 tokens' + saved + '</span>'
     } else {
       const tok      = tokens.input + ' in / ' + tokens.output + ' out'
+      // cost.total is a Claude-pricing COMPARATOR — what this turn WOULD have
+      // cost if we had called Anthropic instead of the local Qwen running on
+      // Harper's GPU. Real spend is ~$0 (sunk-cost GPU); the dashboard sums
+      // these to show the running benefit of self-hosting.
       const usd      = '$' + cost.total.toFixed(4)
+      const ragPill = (meta.rag && meta.rag.count > 0)
+        ? '<span class="pill rag-hit"><span class="label">RAG</span>' + meta.rag.count + ' doc chunk' + (meta.rag.count === 1 ? '' : 's') + '</span>'
+        : '<span class="pill rag-miss"><span class="label">RAG</span>no docs matched — LLM knowledge only</span>'
       const vecClass = vectorContext.hit ? 'vector-hit' : 'vector-miss'
       const vecLabel = vectorContext.hit
-        ? vectorContext.count + ' memor' + (vectorContext.count === 1 ? 'y' : 'ies') + ' recalled from Harper'
-        : 'No vector context — LLM knowledge only'
-      const searchPill = (meta.webSearches > 0)
-        ? '<span class="pill web-search"><span class="label">Web</span>' + meta.webSearches + ' search' + (meta.webSearches > 1 ? 'es' : '') + '</span>'
-        : ''
+        ? vectorContext.count + ' memor' + (vectorContext.count === 1 ? 'y' : 'ies') + ' recalled'
+        : 'no prior memory'
       div.innerHTML =
         '<span class="pill"><span class="label">Latency</span>' + latency + '</span>' +
         '<span class="pill"><span class="label">Tokens</span>' + tok + '</span>' +
-        '<span class="pill"><span class="label">Cost</span>' + usd + '</span>' +
-        searchPill +
-        '<span class="pill ' + vecClass + '"><span class="label">Vector</span>' + vecLabel + '</span>'
+        '<span class="pill" title="Hypothetical Claude pricing — local Qwen spend is $0"><span class="label">Claude-cost</span>' + usd + '</span>' +
+        ragPill +
+        '<span class="pill ' + vecClass + '"><span class="label">Memory</span>' + vecLabel + '</span>'
     }
     return div
   }
