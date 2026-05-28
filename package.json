@@ -4,22 +4,28 @@
   "description": "A conversational AI agent with persistent memory, built on Harper and Claude",
   "type": "module",
   "engines": {
-    "harperdb": "^4.4"
+    "harper": "^5.0"
   },
   "scripts": {
     "setup": "node scripts/download-model.js",
     "predev": "node scripts/download-model.js",
     "prestart": "node scripts/download-model.js",
-    "start": "npx -y dotenv-cli -e .env -o -- harperdb run .",
-    "dev": "npx -y dotenv-cli -e .env -o -- harperdb dev .",
+    "start": "npx -y dotenv-cli -e .env -o -- harper run .",
+    "dev": "npx -y dotenv-cli -e .env -o -- harper dev .",
     "login": "node login.js",
-    "deploy": "npx -y dotenv-cli -- harperdb deploy . restart=rolling replicated=true"
+    "deploy": "npx -y dotenv-cli -- harper deploy . restart=rolling replicated=true",
+    "test:integration": "harper-integration-test-run 'integrationTests/**/*.test.ts'"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@anthropic-ai/vertex-sdk": "^0.15.0",
     "graphql": "^16.8.1",
+    "harper": "^5.0.11",
     "harper-fabric-embeddings": "^0.2.2"
+  },
+  "devDependencies": {
+    "@harperfast/integration-testing": "^0.3.1",
+    "@types/node": "^22.19.19"
   },
   "optionalDependencies": {
     "@node-llama-cpp/linux-x64": "3.17.1",

@@ -1,4 +1,4 @@
-import { Resource } from 'harperdb'
+import { Resource } from 'harper'
 
 // Harper brand palette
 // Edge Gray #383d40 | Cloud White #f5f5f5 | Quantum Purple #312556
@@ -551,8 +551,7 @@ const HTML = /* html */ `<!DOCTYPE html>
 </html>`
 
 export class Chat extends Resource {
-  static loadAsInstance = false
-  get(target) {
+  static get(target) {
     target.checkPermission = false
     return new Response(HTML, {
       headers: { 'Content-Type': 'text/html; charset=utf-8' },
