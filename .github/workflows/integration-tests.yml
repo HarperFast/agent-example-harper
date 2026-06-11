@@ -41,6 +41,7 @@ jobs:
     name: Integration Tests (Node ${{ matrix.node-version }})
     needs: [generate-node-version-matrix]
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     strategy:
       fail-fast: false

@@ -10,11 +10,6 @@ import { setupHarperWithFixture, teardownHarper, type ContextWithHarper } from '
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 
-// harper's exports map only exposes ".", so resolving 'harper/dist/bin/harper.js'
-// (the harness's default auto-resolution) throws ERR_PACKAGE_PATH_NOT_EXPORTED. Resolve the CLI
-// from harper's exported main entry and pass it explicitly via the harness escape hatch.
-const harperBinPath = resolve(dirname(fileURLToPath(import.meta.resolve('harper'))), 'bin/harper.js');
-
 const FIXTURE_PATH = fileURLToPath(new URL('../', import.meta.url));
 
 function authFetch(
@@ -32,6 +27,10 @@ function authFetch(
 
 void suite('agent-example-harper loads', (ctx: ContextWithHarper) => {
 	before(async () => {
+		// harper's exports map only exposes ".", so resolving 'harper/dist/bin/harper.js'
+		// (the harness's default auto-resolution) throws ERR_PACKAGE_PATH_NOT_EXPORTED. Resolve the CLI
+		// from harper's exported main entry and pass it explicitly via the harness escape hatch.
+		const harperBinPath = resolve(dirname(fileURLToPath(import.meta.resolve('harper'))), 'bin/harper.js');
 		await setupHarperWithFixture(ctx, FIXTURE_PATH, { startupTimeoutMs: 60000, harperBinPath });
 	});
 
