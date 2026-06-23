@@ -11,13 +11,8 @@ type Message @table(expiration: 3600) @export {
   role: String
   content: String
   cost: Float
-  embedding: [Float] @indexed(type: "HNSW", distance: "cosine")
+  embedding: [Float] @embed(source: "content", model: "text-embed") @indexed(type: "HNSW", distance: "cosine")
   createdAt: String
-}
-
-type EmbeddingCache @table @export {
-  id: ID @primaryKey
-  embedding: [Float]
 }
 
 type Stats @table @export {

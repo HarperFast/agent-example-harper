@@ -18,9 +18,9 @@ Live demo: https://agent-example.stephen-demo-org.harperfabric.com/Chat
 
 ## Tech Stack
 
-- **Runtime:** Harper (harperdb) — unified DB/cache/vector/API
+- **Runtime:** Harper (harperdb) **5.1+** — unified DB/cache/vector/API. Requires Node.js `^22.18.0 || >=24.0.0` (5.1's rocksdb storage engine).
 - **LLM:** Claude Sonnet via Anthropic SDK (`@anthropic-ai/sdk`) or Google Cloud Vertex AI (`@anthropic-ai/vertex-sdk`)
-- **Embeddings:** `bge-small-en-v1.5` running locally via `harper-fabric-embeddings` (llama.cpp) — no embedding API
+- **Embeddings:** `bge-large` via a local **Ollama** server, driven by Harper's schema-level `@embed` directive at write time and `models.embed()` at query time. Configured in the Harper instance config under `models.embedding.text-embed` (see below).
 - **Web Search:** Anthropic's built-in server-side `web_search_20250305` tool
 - **Language:** JavaScript (ES modules, `"type": "module"`)
 - **License:** Apache 2.0
@@ -28,13 +28,11 @@ Live demo: https://agent-example.stephen-demo-org.harperfabric.com/Chat
 ## Project Structure
 
 ```
-config.yaml                  # Harper app config (rest, schema, resources)
-schemas/schema.graphql       # Database schema — 3 tables, HNSW vector index, TTL
+config.yaml                  # Harper app config (rest, schema, resources). NOTE: models: is NOT read here.
+schemas/schema.graphql       # Database schema — Conversation/Message/Stats, @embed + HNSW vector index, TTL
 resources/Agent.js           # Agent endpoint (POST /Agent) + PublicStats (GET /PublicStats/global)
 resources/Chat.js            # Chat UI (GET /Chat) — full HTML/CSS/JS served from a Resource
 lib/config.js                # Environment variable helpers
-lib/embeddings.js            # Local SLM embeddings (bge-small-en-v1.5 via llama.cpp)
-models/                      # Auto-downloaded GGUF model (gitignored)
 .env                         # ANTHROPIC_API_KEY (not committed)
 ```
 
@@ -49,13 +47,17 @@ models/                      # Auto-downloaded GGUF model (gitignored)
 ### Schema (schemas/schema.graphql)
 - `@table(expiration: 3600)` — 1-hour TTL on Message and Conversation tables
 - `@export` — auto-generates REST CRUD endpoints
-- `@indexed(type: "HNSW", distance: "cosine")` — vector index on `embedding` field
+- `embedding: [Float] @embed(source: "content", model: "text-embed") @indexed(type: "HNSW", distance: "cosine")` — Harper computes the embedding from `content` at write time and indexes it with HNSW. `source` MUST name a real field on the table (e.g. `content`, not `body`) or the schema fails to load. When combined with `@embed`, any explicit `@indexed` must be `type: "HNSW"`.
 - `@indexed` on `conversationId` — secondary index for conversation lookups
 - `Stats` table has no TTL (cumulative savings persist indefinitely)
 
-### Semantic Cache (two layers)
-1. **Layer 1 — Exact match:** Normalize text (lowercase, strip punctuation, collapse whitespace) and compare against conversation history. No DB query needed.
-2. **Layer 2 — HNSW vector search:** Use Harper's native `conditions` search with `comparator: 'lt'` and `value: 0.12` (cosine distance). **Never do manual cosine similarity in JS** — always use Harper's native HNSW index for distance filtering.
+### Embedding model (instance-level config, NOT app config.yaml)
+- The `@embed` directive and `models.embed("text-embed", ...)` both resolve the logical model name `text-embed` against the `models:` block, which Harper reads **only from the instance (root) config** (`<rootPath>/harper-config.yaml` locally; the instance config on Fabric). Putting `models:` in the app `config.yaml` is silently ignored.
+- Block: `models.embedding.text-embed` with `backend: ollama`, `host: localhost:11434`, `model: bge-large`. Requires a running Ollama server with the model pulled (`ollama pull bge-large`). Backends supported by Harper 5.1: `ollama`, `openai`, `anthropic`, `bedrock` — there is no in-process/llama.cpp backend, which is why the old `harper-fabric-embeddings` path was removed.
+
+### Semantic Cache (HNSW vector search)
+- Query text is embedded via `models.embed("text-embed", ...)` (returns `Float32Array`; convert with `Array.from` for the search target). Stored Message embeddings are populated automatically by `@embed` at write time — do NOT pass an `embedding` field to `tables.Message.put()`.
+- Lookup uses Harper's native `conditions` search with `comparator: 'lt'` and `value: 0.12` (cosine distance). **Never do manual cosine similarity in JS** — always use Harper's native HNSW index for distance filtering. The 0.12 threshold is tuned per embedding model; revisit it if you swap `bge-large`.
 
 ### Vector Context (for LLM prompt)
 - Uses `sort: { attribute: 'embedding', target: userEmbedding }` with `limit: 10` — returns top 10 most similar messages

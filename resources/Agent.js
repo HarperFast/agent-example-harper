@@ -1,8 +1,7 @@
-import { Resource, tables } from 'harper'
+import { Resource, tables, models } from 'harper'
 import Anthropic from '@anthropic-ai/sdk'
 import { AnthropicVertex } from '@anthropic-ai/vertex-sdk'
 import { config } from '../lib/config.js'
-import { embed } from '../lib/embeddings.js'
 
 let _client
 const getClient = () => {
@@ -26,33 +25,31 @@ Do NOT summarize, repeat, or reference prior conversation context in your respon
 as background knowledge only if it is directly relevant. Never recite or recap previous answers.`
 
 // Approximate pricing for Claude Sonnet 4.5 (per token)
-const COST_INPUT_PER_TOKEN  = 3  / 1_000_000  // $3  / 1M input tokens
+const COST_INPUT_PER_TOKEN = 3 / 1_000_000  // $3  / 1M input tokens
 const COST_OUTPUT_PER_TOKEN = 15 / 1_000_000  // $15 / 1M output tokens
-const COST_PER_WEB_SEARCH   = 10 / 1_000      // $10 / 1K searches
+const COST_PER_WEB_SEARCH = 10 / 1_000      // $10 / 1K searches
 
 // Anthropic web search tool — executed server-side, no external API key needed.
 // Not available on Vertex AI without an org policy change.
 const WEB_SEARCH_TOOL = { type: 'web_search_20250305', name: 'web_search', max_uses: 5 }
 const isVertex = () => config.provider() === 'vertex'
 
-// Normalize text for embedding cache key — lowercase, strip punctuation, collapse whitespace
-const normalize = (s) =>
-  s.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim()
-
 // Cosine distance threshold for Harper's native HNSW vector search.
 // Harper uses cosine *distance* (0 = identical, 2 = opposite), so this is
 // equivalent to cosine similarity >= 0.88 (distance = 1 - similarity = 0.12).
+// NOTE: tuned for the configured embedding model (models.embedding.text-embed in
+// the Harper instance config) — revisit if you swap the model, since absolute
+// distances shift.
 const CACHE_DISTANCE_THRESHOLD = 0.12
 
-// Get or compute an embedding, using Harper as a cache to skip the SLM on repeated text.
-// On Fabric, the SLM takes ~2.3s per embedding — this cache makes repeat queries instant.
-async function cachedEmbed(text) {
-  const key = normalize(text)
-  const cached = await tables.EmbeddingCache.get(key)
-  if (cached?.embedding) return cached.embedding
-  const embedding = await embed(text)
-  await tables.EmbeddingCache.put({ id: key, embedding })
-  return embedding
+// Embed query text via Harper's model API (the same "text-embed" model the @embed
+// directive uses at write time, so query and stored vectors are comparable).
+// Stored Message embeddings are populated automatically by @embed — this is only
+// needed for the query-side vector used as the HNSW search target.
+async function embedQuery(text) {
+  const [vector] = await models.embed(text, { model: 'text-embed' })
+  // models.embed returns Float32Array; convert to a plain array for the search target.
+  return Array.from(vector)
 }
 
 export class Agent extends Resource {
@@ -68,9 +65,10 @@ export class Agent extends Resource {
       throw err
     }
 
-    // 1. Embed first — before any DB writes to avoid holding transactions open
+    // 1. Embed the query first — before any DB writes to avoid holding transactions open.
+    //    Used as the target vector for the semantic-cache HNSW search below.
     const t1 = Date.now()
-    const userEmbedding = await cachedEmbed(message)
+    const userEmbedding = await embedQuery(message)
     const tEmbed = Date.now() - t1
 
     // 2. Create or reuse a conversation
@@ -86,7 +84,9 @@ export class Agent extends Resource {
     }
     const tConv = Date.now() - t2
 
-    // 3. Store the user message with its embedding
+    // 3. Store the user message. The `embedding` field is populated automatically
+    //    by the @embed directive (schemas/schema.graphql) from `content` at write
+    //    time, which also updates the HNSW index before this put resolves.
     const t3 = Date.now()
     const userMsgId = crypto.randomUUID()
     await tables.Message.put({
@@ -94,7 +94,6 @@ export class Agent extends Resource {
       conversationId,
       role: 'user',
       content: message,
-      embedding: userEmbedding,
       createdAt: new Date().toISOString(),
     })
     const tStore = Date.now() - t3
@@ -144,10 +143,10 @@ export class Agent extends Resource {
         await tables.Stats.put({
           id: 'global',
           totalSaved: ((stats?.totalSaved) ?? 0) + savedCost,
-          cacheHits:  ((stats?.cacheHits)  ?? 0) + 1,
-          updatedAt:  new Date().toISOString(),
+          cacheHits: ((stats?.cacheHits) ?? 0) + 1,
+          updatedAt: new Date().toISOString(),
         })
-      } catch {}
+      } catch { }
       const tStats = Date.now() - t5
       console.log('[Agent] cache hit stats update:', tStats + 'ms')
       return {
@@ -157,7 +156,7 @@ export class Agent extends Resource {
           latencyMs: Date.now() - startTime,
           timing,
           tokens: { input: 0, output: 0, total: 0 },
-          cost:   { input: 0, output: 0, total: 0, saved: savedCost },
+          cost: { input: 0, output: 0, total: 0, saved: savedCost },
           vectorContext: { hit: true, count: 1, cached: true },
         },
       }
@@ -206,9 +205,9 @@ export class Agent extends Resource {
     const { input_tokens, output_tokens } = apiResponse.usage
     const webSearches = apiResponse.usage?.server_tool_use?.web_search_requests ?? 0
 
-    // 9. Store the assistant's response with its embedding
+    // 9. Store the assistant's response. As with the user message, @embed computes
+    //    and indexes the embedding from `content` automatically at write time.
     const assistantMsgId = crypto.randomUUID()
-    const assistantEmbedding = await cachedEmbed(assistantContent)
     const searchCost = webSearches * COST_PER_WEB_SEARCH
     const totalCost = (input_tokens * COST_INPUT_PER_TOKEN) + (output_tokens * COST_OUTPUT_PER_TOKEN) + searchCost
     await tables.Message.put({
@@ -217,7 +216,6 @@ export class Agent extends Resource {
       role: 'assistant',
       content: assistantContent,
       cost: totalCost,
-      embedding: assistantEmbedding,
       createdAt: new Date().toISOString(),
     })
 
@@ -233,15 +231,15 @@ export class Agent extends Resource {
       meta: {
         latencyMs,
         tokens: {
-          input:  input_tokens,
+          input: input_tokens,
           output: output_tokens,
-          total:  input_tokens + output_tokens,
+          total: input_tokens + output_tokens,
         },
         cost: {
-          input:   +(input_tokens  * COST_INPUT_PER_TOKEN).toFixed(6),
-          output:  +(output_tokens * COST_OUTPUT_PER_TOKEN).toFixed(6),
-          search:  +searchCost.toFixed(6),
-          total:   +totalCost.toFixed(6),
+          input: +(input_tokens * COST_INPUT_PER_TOKEN).toFixed(6),
+          output: +(output_tokens * COST_OUTPUT_PER_TOKEN).toFixed(6),
+          search: +searchCost.toFixed(6),
+          total: +totalCost.toFixed(6),
         },
         webSearches,
         vectorContext: { hit: false, count: 0, cached: false },

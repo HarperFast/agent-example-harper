@@ -11,3 +11,10 @@ graphqlSchema:
 
 jsResource:
   files: 'resources/*.js'
+
+# NOTE: the embedding model used by the @embed directive (schemas/schema.graphql)
+# and by models.embed("text-embed", ...) in resources/Agent.js is configured in the
+# Harper INSTANCE (root) config — `models:` is only read from there, not this app
+# config. See README ("Embedding model") for the block. For local dev it lives in
+# <rootPath>/harper-config.yaml; on Fabric it's set on the instance. The logical
+# name "text-embed" is what @embed(model: "text-embed") resolves against.

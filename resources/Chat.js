@@ -308,7 +308,7 @@ const HTML = /* html */ `<!DOCTYPE html>
           <!-- Arrow: User → Harper -->
           <line x1="130" y1="32" x2="130" y2="50" stroke="rgba(255,255,255,0.22)" stroke-width="1.5" marker-end="url(#ah)"/>
 
-          <!-- HARPER outer container — Agent + DB + SLM all live here -->
+          <!-- HARPER outer container — Agent + DB + embedding all live here -->
           <rect x="4" y="52" width="252" height="298" rx="7" fill="rgba(102,255,204,0.04)" stroke="#66ffcc" stroke-width="1.5"/>
           <text x="130" y="67" text-anchor="middle" fill="#66ffcc" font-size="9" font-weight="700" letter-spacing="0.1em">HARPER</text>
 
@@ -348,10 +348,10 @@ const HTML = /* html */ `<!DOCTYPE html>
           <text x="193" y="238" text-anchor="middle" fill="#66ffcc" font-size="10" font-weight="600">Response</text>
           <text x="193" y="249" text-anchor="middle" fill="rgba(102,255,204,0.55)" font-size="8">$0.00 &bull; &lt;50ms</text>
 
-          <!-- Local SLM box (inside Harper) -->
+          <!-- Embedding model box (inside Harper) -->
           <rect x="12" y="268" width="232" height="40" rx="5" fill="#2a2d30" stroke="rgba(167,139,250,0.5)" stroke-width="1"/>
-          <text x="128" y="284" text-anchor="middle" fill="#a78bfa" font-size="10" font-weight="600">Local SLM · bge-small-en-v1.5</text>
-          <text x="128" y="297" text-anchor="middle" fill="rgba(167,139,250,0.55)" font-size="8.5">embeddings run in Harper · no API cost</text>
+          <text x="128" y="284" text-anchor="middle" fill="#a78bfa" font-size="10" font-weight="600">@embed · bge-large (local Ollama)</text>
+          <text x="128" y="297" text-anchor="middle" fill="rgba(167,139,250,0.55)" font-size="8.5">schema-level embeddings · no cloud API</text>
 
           <!-- Harper box ends at y=350 -->
 
@@ -362,9 +362,9 @@ const HTML = /* html */ `<!DOCTYPE html>
           <rect x="4" y="372" width="252" height="50" rx="6" fill="#312556" stroke="#7a3a87" stroke-width="1"/>
           <text x="9" y="386" fill="rgba(255,255,255,0.3)" font-size="7" font-weight="500" font-style="italic">external</text>
           <text x="128" y="390" text-anchor="middle" fill="#f5f5f5" font-size="10" font-weight="500">Claude Sonnet · Web Search</text>
-          <text x="128" y="404" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-size="8.5">Anthropic API · response embedded by local SLM</text>
+          <text x="128" y="404" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-size="8.5">Anthropic API · response embedded via @embed</text>
 
-          <!-- Arrow: Claude → SLM in Harper -->
+          <!-- Arrow: Claude → embedding in Harper -->
           <line x1="128" y1="352" x2="128" y2="372" stroke="rgba(167,139,250,0.7)" stroke-width="1.5" marker-end="url(#ah-d)"/>
           <text x="128" y="364" text-anchor="middle" fill="rgba(167,139,250,0.5)" font-size="7.5">embed &amp; store in Harper</text>
         </svg>
