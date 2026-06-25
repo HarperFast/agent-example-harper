@@ -20,7 +20,7 @@
     "@anthropic-ai/sdk": "^0.39.0",
     "@anthropic-ai/vertex-sdk": "^0.15.0",
     "graphql": "^16.8.1",
-    "harper": "^5.0.11",
+    "harper": "^5.1.13",
     "harper-fabric-embeddings": "^0.2.2"
   },
   "devDependencies": {
