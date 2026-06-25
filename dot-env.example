@@ -2,7 +2,7 @@
 
 # Anthropic (Optional)
 ANTHROPIC_API_KEY=sk-ant-your-key-here
-CLAUDE_MODEL=claude-sonnet-4-5-20250514
+CLAUDE_MODEL=claude-sonnet-4-6
 
 #Google Vertex AI (optional)
 #LLM_PROVIDER=vertex
