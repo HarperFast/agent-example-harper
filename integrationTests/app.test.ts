@@ -30,6 +30,15 @@ void suite('agent-example-harper loads', (ctx: ContextWithHarper) => {
 		// harper's exports map only exposes ".", so resolving 'harper/dist/bin/harper.js'
 		// (the harness's default auto-resolution) throws ERR_PACKAGE_PATH_NOT_EXPORTED. Resolve the CLI
 		// from harper's exported main entry and pass it explicitly via the harness escape hatch.
+		//
+		// This is a deliberate, tracked workaround, not an oversight. It assumes harper's main
+		// entry (dist/index.js) and its CLI (dist/bin/harper.js) stay siblings under dist/ — true
+		// as of harper 5.2.1, but an unversioned internal detail. The real fix is upstream:
+		// harper exporting its bin path, or @harperfast/integration-testing resolving the CLI
+		// from a package name. Until then the failure mode is safe rather than silent — the
+		// harness's own existsSync check in getHarperScript() throws a clear error if this path
+		// stops existing. Resolved inside before() (not at module scope) so any failure surfaces
+		// as a named test failure in the TAP stream instead of a silent module-load crash.
 		const harperBinPath = resolve(dirname(fileURLToPath(import.meta.resolve('harper'))), 'bin/harper.js');
 		await setupHarperWithFixture(ctx, FIXTURE_PATH, { startupTimeoutMs: 60000, harperBinPath });
 	});
