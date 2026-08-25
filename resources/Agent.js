@@ -1,53 +1,54 @@
-import { Resource, tables } from 'harper'
-import Anthropic from '@anthropic-ai/sdk'
-import { AnthropicVertex } from '@anthropic-ai/vertex-sdk'
-import { config } from '../lib/config.js'
+import { createHash } from 'node:crypto'
+import { logger, models, Resource, tables } from 'harper'
 import { embed } from '../lib/embeddings.js'
-
-let _client
-const getClient = () => {
-  if (_client) return _client
-  if (config.provider() === 'vertex') {
-    _client = new AnthropicVertex({
-      projectId: config.vertex.projectId(),
-      region: config.vertex.region(),
-    })
-  } else {
-    _client = new Anthropic({ apiKey: config.anthropic.apiKey() })
-  }
-  return _client
-}
-
-const getModel = () =>
-  config.provider() === 'vertex' ? config.vertex.model() : config.anthropic.model()
 
 const SYSTEM_PROMPT = `You are a helpful, concise assistant. Answer only the user's current question. \
 Do NOT summarize, repeat, or reference prior conversation context in your response — use it silently \
 as background knowledge only if it is directly relevant. Never recite or recap previous answers.`
 
-// Approximate pricing for Claude Sonnet 4.5 (per token)
-const COST_INPUT_PER_TOKEN  = 3  / 1_000_000  // $3  / 1M input tokens
-const COST_OUTPUT_PER_TOKEN = 15 / 1_000_000  // $15 / 1M output tokens
-const COST_PER_WEB_SEARCH   = 10 / 1_000      // $10 / 1K searches
+// The savings tracker prices every generation at list-price Claude Sonnet 4.5 whichever
+// backend actually ran it, so the dollars are a comparator, never a bill.
+const CLAUDE_COST_INPUT_PER_TOKEN  = 3  / 1_000_000  // $3  / 1M input tokens
+const CLAUDE_COST_OUTPUT_PER_TOKEN = 15 / 1_000_000  // $15 / 1M output tokens
 
-// Anthropic web search tool — executed server-side, no external API key needed.
-// Not available on Vertex AI without an org policy change.
-const WEB_SEARCH_TOOL = { type: 'web_search_20250305', name: 'web_search', max_uses: 5 }
-const isVertex = () => config.provider() === 'vertex'
+// Fallback only: `models.generate()` passes the backend's token usage through, but the
+// field is optional and a backend that reports none leaves it undefined.
+const estimateTokens = (text) => Math.max(1, Math.ceil((text?.length ?? 0) / 4))
 
-// Normalize text for embedding cache key — lowercase, strip punctuation, collapse whitespace
-const normalize = (s) =>
-  s.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim()
+const estimateClaudeCost = (promptTokens, completionTokens) =>
+  promptTokens * CLAUDE_COST_INPUT_PER_TOKEN + completionTokens * CLAUDE_COST_OUTPUT_PER_TOKEN
+
+// Case and whitespace only. This key selects a stored *vector*, so it has to preserve
+// identity: stripping punctuation collided `What is C++?` with `What is C#?`, handing the
+// second asker the first one's embedding to be indexed as their own message.
+const normalize = (s) => s.toLowerCase().replace(/\s+/g, ' ').trim()
+
+// Harper rejects a primary key over ~1978 bytes and message text is unbounded.
+const cacheKey = (text) => createHash('sha256').update(normalize(text)).digest('base64url')
 
 // Cosine distance threshold for Harper's native HNSW vector search.
-// Harper uses cosine *distance* (0 = identical, 2 = opposite), so this is
-// equivalent to cosine similarity >= 0.88 (distance = 1 - similarity = 0.12).
-const CACHE_DISTANCE_THRESHOLD = 0.12
+// Harper uses cosine *distance* (0 = identical, 2 = opposite). 0.15 ≈ cosine
+// similarity 0.85 — loose enough to catch rewordings and related phrasings
+// ("describe the moon landing" / "tell me about apollo 11"), tight enough
+// that the matched reply is reasonably on-topic.
+const CACHE_DISTANCE_THRESHOLD = 0.15
 
-// Get or compute an embedding, using Harper as a cache to skip the SLM on repeated text.
-// On Fabric, the SLM takes ~2.3s per embedding — this cache makes repeat queries instant.
+// Unequal lengths mean the host's embedding backend changed under the stored vectors.
+// Report maximum distance rather than scoring a prefix.
+function cosineDistance(a, b) {
+  if (a.length !== b.length) return 2
+  let dot = 0, na = 0, nb = 0
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i]
+    na += a[i] * a[i]
+    nb += b[i] * b[i]
+  }
+  const denom = Math.sqrt(na) * Math.sqrt(nb)
+  return denom === 0 ? 1 : 1 - dot / denom
+}
+
 async function cachedEmbed(text) {
-  const key = normalize(text)
+  const key = cacheKey(text)
   const cached = await tables.EmbeddingCache.get(key)
   if (cached?.embedding) return cached.embedding
   const embedding = await embed(text)
@@ -109,11 +110,22 @@ export class Agent extends Resource {
         value: CACHE_DISTANCE_THRESHOLD,
         target: userEmbedding,
       },
-      limit: 10,
+      limit: 20,
     })
 
+    const candidates = []
     for await (const match of nearbyMsgs) {
-      if (match.id === userMsgId || match.role !== 'user') continue
+      if (match.id === userMsgId || match.role !== 'user' || !match.embedding) continue
+      candidates.push({ match, distance: cosineDistance(userEmbedding, match.embedding) })
+    }
+    candidates.sort((a, b) => a.distance - b.distance)
+
+    // HNSW iteration is not distance-ordered, so rank here. The re-check is not redundant:
+    // core's cosine helper zero-pads to the longer vector rather than rejecting a length
+    // mismatch, so a row left from a different embedding backend can pass `lt`.
+    const filtered = candidates.filter((c) => c.distance <= CACHE_DISTANCE_THRESHOLD)
+
+    for (const { match } of filtered) {
       const matchConvMsgs = []
       const matchHistory = tables.Message.search({
         conditions: [{ attribute: 'conversationId', value: match.conversationId }],
@@ -122,34 +134,34 @@ export class Agent extends Resource {
       for await (const m of matchHistory) matchConvMsgs.push(m)
       matchConvMsgs.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       const midx = matchConvMsgs.findIndex((m) => m.id === match.id)
-      const reply = matchConvMsgs.slice(midx + 1).find((m) => m.role === 'assistant')
-      if (reply) {
-        cachedReply = reply
+      if (midx === -1) continue
+      // Only the IMMEDIATELY following message is this question's answer: scanning forward
+      // would skip past later user messages that produced no reply of their own and return
+      // an answer to a different question.
+      const next = matchConvMsgs[midx + 1]
+      if (next?.role === 'assistant') {
+        cachedReply = next
         break
       }
     }
     const tCache = Date.now() - t4
 
     const timing = { embedMs: tEmbed, convMs: tConv, storeMs: tStore, cacheSearchMs: tCache }
-    console.log('[Agent] timing:', JSON.stringify(timing))
+    logger.debug('[Agent] timing:', timing)
 
-    // Return the cached answer — zero LLM cost
     if (cachedReply) {
-      const t5 = Date.now()
-      let savedCost = 0
+      const savedCost = cachedReply.cost ?? 0
       try {
-        const origMsg = await tables.Message.get(cachedReply.id)
-        savedCost = origMsg?.cost ?? 0
         const stats = await tables.Stats.get('global')
         await tables.Stats.put({
           id: 'global',
-          totalSaved: ((stats?.totalSaved) ?? 0) + savedCost,
-          cacheHits:  ((stats?.cacheHits)  ?? 0) + 1,
-          updatedAt:  new Date().toISOString(),
+          totalSaved: (stats?.totalSaved ?? 0) + savedCost,
+          cacheHits: ((stats?.cacheHits) ?? 0) + 1,
+          updatedAt: new Date().toISOString(),
         })
-      } catch {}
-      const tStats = Date.now() - t5
-      console.log('[Agent] cache hit stats update:', tStats + 'ms')
+      } catch (err) {
+        logger.warn('[Agent] savings counter update failed', err)
+      }
       return {
         conversationId,
         message: { role: 'assistant', content: cachedReply.content },
@@ -157,69 +169,60 @@ export class Agent extends Resource {
           latencyMs: Date.now() - startTime,
           timing,
           tokens: { input: 0, output: 0, total: 0 },
-          cost:   { input: 0, output: 0, total: 0, saved: savedCost },
+          cost: { input: 0, output: 0, total: 0, saved: savedCost },
           vectorContext: { hit: true, count: 1, cached: true },
         },
       }
     }
 
-    // 5. Call Claude with web search enabled — standalone question, no conversation history.
-    //    Anthropic executes searches server-side, no external search API or key required.
-    const messages = [{ role: 'user', content: message }]
-
-    const tools = isVertex() ? [] : [WEB_SEARCH_TOOL]
-
-    let apiResponse = await getClient().messages.create({
-      model: getModel(),
-      max_tokens: 1024,
-      ...(tools.length && { tools }),
-      system: SYSTEM_PROMPT,
-      messages,
-    })
-
-    // Handle pause_turn — server hit the max_uses limit mid-response; continue once
-    if (apiResponse.stop_reason === 'pause_turn') {
-      apiResponse = await getClient().messages.create({
-        model: getModel(),
-        max_tokens: 1024,
-        ...(tools.length && { tools }),
+    // 5. Generate via models.generate() — routes to whatever backend the host
+    //    has configured for `models.generative.default` (the shared inference process
+    //    on Fabric GPU hosts, Ollama / OpenAI / Anthropic / Bedrock elsewhere).
+    const result = await models.generate(
+      {
+        messages: [{ role: 'user', content: message }],
         system: SYSTEM_PROMPT,
-        messages: [...messages, { role: 'assistant', content: apiResponse.content }],
-      })
-    }
+      },
+      { maxTokens: 1024 },
+    )
 
     const latencyMs = Date.now() - startTime
+    const assistantContent = result.content?.trim() ?? ''
+    if (!assistantContent) {
+      const err = new Error(`Model returned no content (finishReason: ${result.finishReason})`)
+      err.statusCode = 502
+      throw err
+    }
+    // A truncated or filtered answer is still worth returning, but persisting it would seed
+    // the cache: every near-miss question thereafter is served the partial text as complete.
+    const isComplete = result.finishReason === 'stop'
+    const promptTokens = result.usage?.promptTokens ?? estimateTokens(SYSTEM_PROMPT + message)
+    const completionTokens = result.usage?.completionTokens ?? estimateTokens(assistantContent)
+    const tokensAreMeasured = result.usage?.promptTokens !== undefined
+    const estimatedCost = estimateClaudeCost(promptTokens, completionTokens)
 
-    // The API can split the answer across multiple text blocks (sentence fragments joined
-    // without separators) and may emit a text block BEFORE the web search tool call.
-    // Strategy: find the last non-text block (tool use / search result) and take only the
-    // text blocks that follow it — these form the actual answer. Join with '' since the
-    // fragments are already continuous prose. Falls back to all text blocks if no tools used.
-    const lastToolIdx = apiResponse.content.reduce((acc, b, i) => b.type !== 'text' ? i : acc, -1)
-    const assistantContent = apiResponse.content
-      .slice(lastToolIdx + 1)
-      .filter((b) => b.type === 'text')
-      .map((b) => b.text)
-      .join('')
-      .trim()
-
-    const { input_tokens, output_tokens } = apiResponse.usage
-    const webSearches = apiResponse.usage?.server_tool_use?.web_search_requests ?? 0
-
-    // 9. Store the assistant's response with its embedding
-    const assistantMsgId = crypto.randomUUID()
-    const assistantEmbedding = await cachedEmbed(assistantContent)
-    const searchCost = webSearches * COST_PER_WEB_SEARCH
-    const totalCost = (input_tokens * COST_INPUT_PER_TOKEN) + (output_tokens * COST_OUTPUT_PER_TOKEN) + searchCost
-    await tables.Message.put({
-      id: assistantMsgId,
-      conversationId,
-      role: 'assistant',
-      content: assistantContent,
-      cost: totalCost,
-      embedding: assistantEmbedding,
-      createdAt: new Date().toISOString(),
-    })
+    // 9. Store the assistant's response. The cost rides along so a later cache hit on this
+    //    question can credit it to `totalSaved`.
+    if (isComplete) {
+      // Not `cachedEmbed`: a generated reply is unique text, so the lookup always misses.
+      // A failure here must not discard an answer already paid for, so the row is stored
+      // unembedded; the candidate loop skips rows without an embedding.
+      let assistantEmbedding
+      try {
+        assistantEmbedding = await embed(assistantContent)
+      } catch (err) {
+        logger.warn('[Agent] reply embedding failed; storing message unindexed', err)
+      }
+      await tables.Message.put({
+        id: crypto.randomUUID(),
+        conversationId,
+        role: 'assistant',
+        content: assistantContent,
+        cost: estimatedCost,
+        embedding: assistantEmbedding,
+        createdAt: new Date().toISOString(),
+      })
+    }
 
     // 10. Update conversation timestamp
     await tables.Conversation.put({
@@ -232,19 +235,22 @@ export class Agent extends Resource {
       message: { role: 'assistant', content: assistantContent },
       meta: {
         latencyMs,
+        timing,
         tokens: {
-          input:  input_tokens,
-          output: output_tokens,
-          total:  input_tokens + output_tokens,
+          input: promptTokens,
+          output: completionTokens,
+          total: promptTokens + completionTokens,
         },
         cost: {
-          input:   +(input_tokens  * COST_INPUT_PER_TOKEN).toFixed(6),
-          output:  +(output_tokens * COST_OUTPUT_PER_TOKEN).toFixed(6),
-          search:  +searchCost.toFixed(6),
-          total:   +totalCost.toFixed(6),
+          input: +(promptTokens * CLAUDE_COST_INPUT_PER_TOKEN).toFixed(6),
+          output: +(completionTokens * CLAUDE_COST_OUTPUT_PER_TOKEN).toFixed(6),
+          total: +estimatedCost.toFixed(6),
+          // `saved` is what cache hits credit; on a real generation it stays 0.
+          saved: 0,
         },
-        webSearches,
         vectorContext: { hit: false, count: 0, cached: false },
+        finishReason: result.finishReason,
+        tokensAreMeasured,
       },
     }
   }

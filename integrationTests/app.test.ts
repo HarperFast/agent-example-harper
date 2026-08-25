@@ -1,8 +1,8 @@
 /**
  * Integration tests for agent-example-harper.
  * Tests that the app starts and key endpoints respond correctly.
- * Note: Full agent functionality requires Anthropic/Vertex API keys
- * which are not available in CI, so we only test structural correctness.
+ * Note: Full agent functionality requires a configured `models` backend, which is not
+ * available in CI, so we only test structural correctness.
  */
 import { suite, test, before, after } from 'node:test';
 import { strictEqual, ok } from 'node:assert/strict';
@@ -64,6 +64,25 @@ void suite('agent-example-harper loads', (ctx: ContextWithHarper) => {
 	void test('GET /PublicStats returns a valid response', async () => {
 		const res = await authFetch(ctx, '/PublicStats');
 		ok([200, 404].includes(res.status), `unexpected status ${res.status}`);
+	});
+
+	// Guards `import { models } from 'harper'`: with no backend configured the request must
+	// fail in the models layer, not on an undefined import.
+	void test('POST /Agent reaches the models layer', async () => {
+		const res = await authFetch(ctx, '/Agent', {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ message: 'hello there' }),
+		});
+		const body = await res.json();
+		if (res.status === 200) {
+			// A host with backends configured: assert the success shape rather than passing vacuously.
+			strictEqual(typeof body.conversationId, 'string');
+			strictEqual(body.message.role, 'assistant');
+			ok(body.message.content.length > 0, 'assistant content must be non-empty');
+			return;
+		}
+		strictEqual(body.code, 'ModelBackendNotFoundError', `unexpected error body ${JSON.stringify(body)}`);
 	});
 
 	void test('POST /Conversation/ creates a conversation record', async () => {

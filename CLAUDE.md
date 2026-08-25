@@ -12,16 +12,15 @@ These skills provide LLM-consumable guidelines at https://github.com/HarperFast/
 
 ## Project Overview
 
-Harper Demo Agent — a conversational AI agent running entirely on Harper with Claude as the LLM. Harper provides the database, vector index, semantic cache, API server, and deployment runtime in a single process.
+Harper Demo Agent — a conversational AI agent running entirely on Harper. Harper provides the database, vector index, semantic cache, API server, model gateway, and deployment runtime in a single process; generation and embedding both go through Harper's `models` API, so the app carries no LLM SDK and no API key.
 
 Live demo: https://agent-example.stephen-demo-org.harperfabric.com/Chat
 
 ## Tech Stack
 
 - **Runtime:** Harper (harperdb) — unified DB/cache/vector/API
-- **LLM:** Claude Sonnet via Anthropic SDK (`@anthropic-ai/sdk`) or Google Cloud Vertex AI (`@anthropic-ai/vertex-sdk`)
-- **Embeddings:** `bge-small-en-v1.5` running locally via `harper-fabric-embeddings` (llama.cpp) — no embedding API
-- **Web Search:** Anthropic's built-in server-side `web_search_20250305` tool
+- **LLM:** `models.generate()` — routes to the host's configured `models.generative.default` backend (the shared inference process on Fabric GPU hosts; Ollama / OpenAI / Anthropic / Bedrock elsewhere)
+- **Embeddings:** `models.embed()` — routes to the host's configured `models.embedding.default` backend
 - **Language:** JavaScript (ES modules, `"type": "module"`)
 - **License:** Apache 2.0
 
@@ -32,10 +31,8 @@ config.yaml                  # Harper app config (rest, schema, resources)
 schemas/schema.graphql       # Database schema — 3 tables, HNSW vector index, TTL
 resources/Agent.js           # Agent endpoint (POST /Agent) + PublicStats (GET /PublicStats/global)
 resources/Chat.js            # Chat UI (GET /Chat) — full HTML/CSS/JS served from a Resource
-lib/config.js                # Environment variable helpers
-lib/embeddings.js            # Local SLM embeddings (bge-small-en-v1.5 via llama.cpp)
-models/                      # Auto-downloaded GGUF model (gitignored)
-.env                         # ANTHROPIC_API_KEY (not committed)
+lib/embeddings.js            # Thin wrapper over `models.embed()`
+.env                         # Deploy credentials only (not committed)
 ```
 
 ## Key Architecture Decisions
@@ -53,19 +50,13 @@ models/                      # Auto-downloaded GGUF model (gitignored)
 - `@indexed` on `conversationId` — secondary index for conversation lookups
 - `Stats` table has no TTL (cumulative savings persist indefinitely)
 
-### Semantic Cache (two layers)
-1. **Layer 1 — Exact match:** Normalize text (lowercase, strip punctuation, collapse whitespace) and compare against conversation history. No DB query needed.
-2. **Layer 2 — HNSW vector search:** Use Harper's native `conditions` search with `comparator: 'lt'` and `value: 0.12` (cosine distance). **Never do manual cosine similarity in JS** — always use Harper's native HNSW index for distance filtering.
+### Semantic Cache
+1. **Embedding cache (`EmbeddingCache`):** keyed by a SHA-256 digest of the text with case and whitespace normalized (punctuation is preserved — the key selects a vector, so it must preserve identity) — a digest because Harper rejects a primary key over ~1978 bytes. Skips the embedding backend on exactly repeated text; it is not an answer cache.
+2. **Answer cache — HNSW vector search:** Use Harper's native `conditions` search with `comparator: 'lt'` and `value: 0.15` (cosine distance). **Never scan a table and score it in JS** — the index does the filtering. `resources/Agent.js` does recompute cosine distance, but only over the ≤20 rows the index already returned, to rank them (HNSW iteration is not distance-ordered) and to re-check the bound; matches outside `lt` have been observed to survive it, which is worth confirming against harper core rather than leaving as app-side compensation.
 
-### Vector Context (for LLM prompt)
-- Uses `sort: { attribute: 'embedding', target: userEmbedding }` with `limit: 10` — returns top 10 most similar messages
-- Top 5 injected into system prompt as silent background context
-- System prompt explicitly tells Claude NOT to repeat/summarize context in responses
-
-### Web Search Response Handling
-- Anthropic API returns multiple `text` blocks (sentence fragments) mixed with `server_tool_use` and `web_search_tool_result` blocks
-- **Always join text blocks that appear AFTER the last non-text block** — text before tool calls is narration ("Let me search for that..."), not the answer
-- Handle `pause_turn` stop reason by continuing with partial response as assistant message
+### Models API access
+- `import { models } from 'harper'` — `models` is a process-wide singleton, exported by the `harper` package and also available as a bare global. It is the same object as `scope.models`, so a `handleApplication(scope)` plugin that stashes the Scope on `globalThis` is not needed.
+- `models.generate()` returns `usage` (`promptTokens` / `completionTokens`) passed through from the backend, but the field is optional — `resources/Agent.js` falls back to a length estimate and reports which it used as `meta.tokensAreMeasured`.
 
 ### Chat UI (resources/Chat.js)
 - Full HTML/CSS/JS served from a single template literal via `new Response(HTML, ...)`
@@ -82,28 +73,15 @@ npm run start        # Start production server
 npm run deploy       # Deploy to Harper Fabric
 ```
 
-## Environment Variables
+## Model Configuration
 
-```
-LLM_PROVIDER         # Optional — "anthropic" (default) or "vertex" (Google Cloud Vertex AI)
-ANTHROPIC_API_KEY    # Required when LLM_PROVIDER=anthropic — Anthropic API key
-CLAUDE_MODEL         # Optional — defaults to claude-sonnet-4-5-20250929 (anthropic) or claude-sonnet-4-5@20250929 (vertex)
-VERTEX_PROJECT_ID    # Required when LLM_PROVIDER=vertex — Google Cloud project ID
-VERTEX_REGION        # Optional — Vertex AI region, defaults to "global"
-```
+The app names no model and holds no provider credentials. Backends are configured on the
+Harper *host* — the `models:` block of `harperdb-config.yaml`, or the equivalent env vars —
+under `models.embedding.default` and `models.generative.default`. With neither configured,
+`POST /Agent` returns a `ModelBackendNotFoundError`.
 
-### Vertex AI Setup
-
-To use Claude through Google Cloud Vertex AI instead of the direct Anthropic API:
-
-1. Set up GCP credentials: `gcloud auth application-default login`
-2. Configure env vars:
-   ```
-   LLM_PROVIDER=vertex
-   VERTEX_PROJECT_ID=my-gcp-project
-   VERTEX_REGION=global
-   ```
-3. Note: Vertex model IDs use `@` version suffixes (e.g. `claude-sonnet-4-5@20250929`) while direct API uses `-` (e.g. `claude-sonnet-4-5-20250929`)
+`.env` is still read (see `loadEnv` in `config.yaml`) but only carries the Fabric deploy
+credentials: `CLI_TARGET`, `CLI_TARGET_USERNAME`, `CLI_TARGET_PASSWORD`.
 
 ## Common Tasks
 
@@ -131,5 +109,5 @@ curl http://localhost:9926/PublicStats/global
 1. **Template literal backslashes** — `\n` inside a JS template literal becomes a real newline. Use `\\n` in Chat.js script sections. Same for `\d`, `\s`, `\*` in regex patterns.
 2. **Resource class naming** — naming a class `Stats` when there's a `Stats` table shadows `tables.Stats`. Always use a different name (e.g. `PublicStats`).
 3. **`tables.Stats.get()` on empty DB** — returns `null`, not `{}`. Always provide a fallback: `?? { id: 'global', totalSaved: 0, cacheHits: 0 }`.
-4. **Web search text blocks** — join only text blocks after the last tool block. Joining all text blocks concatenates narration with the answer.
+4. **`models.generate().usage` is optional** — a backend that reports none leaves it undefined, so `meta.tokens` may be a length estimate. `meta.tokensAreMeasured` says which. Dollar amounts are always list-price Claude Sonnet, never the backend's real cost.
 5. **V2 auth** — `target.checkPermission = false` is the only way to allow unauthenticated access when `loadAsInstance = false`. V1 methods (`allowRead`) are silently ignored.

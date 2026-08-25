@@ -195,8 +195,6 @@ const HTML = /* html */ `<!DOCTYPE html>
     .meta .pill.vector-miss .label { color: var(--muted); }
     .meta .pill.cache-hit   { color: var(--btree-green); font-weight: 500; }
     .meta .pill.cache-hit .label { opacity: 1; }
-    .meta .pill.web-search  { color: #a78bfa; }
-    .meta .pill.web-search .label { color: #a78bfa; opacity: 1; }
 
     /* ── Typing indicator ───────────────────────────────── */
     .typing-wrap { align-self: flex-start; }
@@ -330,7 +328,7 @@ const HTML = /* html */ `<!DOCTYPE html>
           <!-- Semantic Cache (inside Harper) -->
           <rect x="138" y="122" width="110" height="66" rx="5" fill="#2a2d30" stroke="rgba(102,255,204,0.28)" stroke-width="1"/>
           <text x="193" y="140" text-anchor="middle" fill="#f5f5f5" font-size="10" font-weight="500">Semantic Cache</text>
-          <text x="193" y="154" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">cosine sim &gt;= 0.88</text>
+          <text x="193" y="154" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">cosine sim &gt;= 0.85</text>
           <text x="193" y="167" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">instant answers</text>
           <text x="193" y="180" text-anchor="middle" fill="rgba(255,255,255,0.42)" font-size="8.5">$0 LLM cost</text>
 
@@ -348,23 +346,23 @@ const HTML = /* html */ `<!DOCTYPE html>
           <text x="193" y="238" text-anchor="middle" fill="#66ffcc" font-size="10" font-weight="600">Response</text>
           <text x="193" y="249" text-anchor="middle" fill="rgba(102,255,204,0.55)" font-size="8">$0.00 &bull; &lt;50ms</text>
 
-          <!-- Local SLM box (inside Harper) -->
+          <!-- Embedding backend box (inside Harper) -->
           <rect x="12" y="268" width="232" height="40" rx="5" fill="#2a2d30" stroke="rgba(167,139,250,0.5)" stroke-width="1"/>
-          <text x="128" y="284" text-anchor="middle" fill="#a78bfa" font-size="10" font-weight="600">Local SLM · bge-small-en-v1.5</text>
-          <text x="128" y="297" text-anchor="middle" fill="rgba(167,139,250,0.55)" font-size="8.5">embeddings run in Harper · no API cost</text>
+          <text x="128" y="284" text-anchor="middle" fill="#a78bfa" font-size="10" font-weight="600">Shared model · nomic-embed-text</text>
+          <text x="128" y="297" text-anchor="middle" fill="rgba(167,139,250,0.55)" font-size="8.5">models.embed() · GPU on Fabric · no API cost</text>
 
           <!-- Harper box ends at y=350 -->
 
-          <!-- Arrow: cache miss exits Harper → Claude (outside) -->
+          <!-- Arrow: cache miss exits Harper → model backend (outside) -->
           <line x1="66" y1="206" x2="66" y2="370" stroke="rgba(255,255,255,0.22)" stroke-width="1.5" marker-end="url(#ah)"/>
 
-          <!-- Claude Sonnet box (EXTERNAL — below Harper) -->
+          <!-- Generative backend box (EXTERNAL — below Harper) -->
           <rect x="4" y="372" width="252" height="50" rx="6" fill="#312556" stroke="#7a3a87" stroke-width="1"/>
           <text x="9" y="386" fill="rgba(255,255,255,0.3)" font-size="7" font-weight="500" font-style="italic">external</text>
-          <text x="128" y="390" text-anchor="middle" fill="#f5f5f5" font-size="10" font-weight="500">Claude Sonnet · Web Search</text>
-          <text x="128" y="404" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-size="8.5">Anthropic API · response embedded by local SLM</text>
+          <text x="128" y="390" text-anchor="middle" fill="#f5f5f5" font-size="10" font-weight="500">models.generate()</text>
+          <text x="128" y="404" text-anchor="middle" fill="rgba(255,255,255,0.45)" font-size="8.5">host-configured backend · reply embedded in Harper</text>
 
-          <!-- Arrow: Claude → SLM in Harper -->
+          <!-- Arrow: generative backend → embedding in Harper -->
           <line x1="128" y1="352" x2="128" y2="372" stroke="rgba(167,139,250,0.7)" stroke-width="1.5" marker-end="url(#ah-d)"/>
           <text x="128" y="364" text-anchor="middle" fill="rgba(167,139,250,0.5)" font-size="7.5">embed &amp; store in Harper</text>
         </svg>
@@ -462,14 +460,10 @@ const HTML = /* html */ `<!DOCTYPE html>
       const vecLabel = vectorContext.hit
         ? vectorContext.count + ' memor' + (vectorContext.count === 1 ? 'y' : 'ies') + ' recalled from Harper'
         : 'No vector context — LLM knowledge only'
-      const searchPill = (meta.webSearches > 0)
-        ? '<span class="pill web-search"><span class="label">Web</span>' + meta.webSearches + ' search' + (meta.webSearches > 1 ? 'es' : '') + '</span>'
-        : ''
       div.innerHTML =
         '<span class="pill"><span class="label">Latency</span>' + latency + '</span>' +
-        '<span class="pill"><span class="label">Tokens</span>' + tok + '</span>' +
-        '<span class="pill"><span class="label">Cost</span>' + usd + '</span>' +
-        searchPill +
+        '<span class="pill"><span class="label">Tokens</span>' + tok + (meta.tokensAreMeasured ? '' : ' (est.)') + '</span>' +
+        '<span class="pill"><span class="label">Cost</span>' + usd + ' (est.)</span>' +
         '<span class="pill ' + vecClass + '"><span class="label">Vector</span>' + vecLabel + '</span>'
     }
     return div
