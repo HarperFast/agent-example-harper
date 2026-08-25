@@ -50,14 +50,9 @@ lib/embeddings.js            # Thin wrapper over `models.embed()`
 - `@indexed` on `conversationId` — secondary index for conversation lookups
 - `Stats` table has no TTL (cumulative savings persist indefinitely)
 
-### Semantic Cache (two layers)
-1. **Layer 1 — Exact match:** Normalize text (lowercase, strip punctuation, collapse whitespace) and compare against conversation history. No DB query needed.
-2. **Layer 2 — HNSW vector search:** Use Harper's native `conditions` search with `comparator: 'lt'` and `value: 0.15` (cosine distance). **Never scan a table and score it in JS** — the index does the filtering. `resources/Agent.js` does recompute cosine distance, but only over the ≤20 rows the index already returned, to rank them (HNSW iteration is not distance-ordered) and to re-check the bound; matches outside `lt` have been observed to survive it, which is worth confirming against harper core rather than leaving as app-side compensation.
-
-### Vector Context (for LLM prompt)
-- Uses `sort: { attribute: 'embedding', target: userEmbedding }` with `limit: 10` — returns top 10 most similar messages
-- Top 5 injected into system prompt as silent background context
-- System prompt explicitly tells Claude NOT to repeat/summarize context in responses
+### Semantic Cache
+1. **Embedding cache (`EmbeddingCache`):** keyed by a SHA-256 digest of the normalized text (lowercased, punctuation stripped, whitespace collapsed) — a digest because Harper rejects a primary key over ~1978 bytes. Skips the embedding backend on exactly repeated text; it is not an answer cache.
+2. **Answer cache — HNSW vector search:** Use Harper's native `conditions` search with `comparator: 'lt'` and `value: 0.15` (cosine distance). **Never scan a table and score it in JS** — the index does the filtering. `resources/Agent.js` does recompute cosine distance, but only over the ≤20 rows the index already returned, to rank them (HNSW iteration is not distance-ordered) and to re-check the bound; matches outside `lt` have been observed to survive it, which is worth confirming against harper core rather than leaving as app-side compensation.
 
 ### Models API access
 - `import { models } from 'harper'` — `models` is a process-wide singleton, exported by the `harper` package and also available as a bare global. It is the same object as `scope.models`, so a `handleApplication(scope)` plugin that stashes the Scope on `globalThis` is not needed.

@@ -74,8 +74,14 @@ void suite('agent-example-harper loads', (ctx: ContextWithHarper) => {
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ message: 'hello there' }),
 		});
-		if (res.status === 200) return;
 		const body = await res.json();
+		if (res.status === 200) {
+			// A host with backends configured: assert the success shape rather than passing vacuously.
+			strictEqual(typeof body.conversationId, 'string');
+			strictEqual(body.message.role, 'assistant');
+			ok(body.message.content.length > 0, 'assistant content must be non-empty');
+			return;
+		}
 		strictEqual(body.code, 'ModelBackendNotFoundError', `unexpected error body ${JSON.stringify(body)}`);
 	});
 

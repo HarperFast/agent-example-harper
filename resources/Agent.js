@@ -17,8 +17,11 @@ const estimateTokens = (text) => Math.max(1, Math.ceil((text?.length ?? 0) / 4))
 const estimateClaudeCost = (promptTokens, completionTokens) =>
   promptTokens * CLAUDE_COST_INPUT_PER_TOKEN + completionTokens * CLAUDE_COST_OUTPUT_PER_TOKEN
 
+// `\p{L}\p{N}` rather than `\w`: `\w` is ASCII-only, so every message written in a
+// non-Latin script normalized to the empty string and shared one cache key with all the
+// others — returning another user's vector, which then got indexed as this message's.
 const normalize = (s) =>
-  s.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim()
+  s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim()
 
 // Harper rejects a primary key over ~1978 bytes, and message text is unbounded, so the
 // cache is keyed by a digest of the normalized text rather than the text itself.
@@ -189,37 +192,35 @@ export class Agent extends Resource {
 
     const latencyMs = Date.now() - startTime
     const assistantContent = result.content?.trim() ?? ''
-    // An empty or truncated reply must not be persisted: the semantic cache would serve it
-    // to every near-miss question from here on, and `Message` rows have no repair path.
     if (!assistantContent) {
       const err = new Error(`Model returned no content (finishReason: ${result.finishReason})`)
       err.statusCode = 502
       throw err
     }
-    if (result.finishReason === 'length') {
-      const err = new Error('Model response was truncated at maxTokens; not caching a partial answer')
-      err.statusCode = 502
-      throw err
-    }
+    // A truncated or filtered answer is still worth returning, but persisting it would seed
+    // the semantic cache: every near-miss question from here on would be served the partial
+    // text as a complete answer, and `Message` rows have no repair path short of the TTL.
+    const isComplete = result.finishReason === 'stop'
     const promptTokens = estimateTokens(SYSTEM_PROMPT + message)
     const completionTokens = estimateTokens(assistantContent)
     const estimatedCost = estimateClaudeCost(promptTokens, completionTokens)
 
-    // 9. Store the assistant's response with its embedding. The estimated cost rides along
-    //    so a later cache hit on this question can credit it to `totalSaved`.
-    const assistantMsgId = crypto.randomUUID()
-    // Not `cachedEmbed`: a generated reply is unique text, so the cache lookup is a
-    // guaranteed miss and the write is a large row nothing will ever read.
-    const assistantEmbedding = await embed(assistantContent)
-    await tables.Message.put({
-      id: assistantMsgId,
-      conversationId,
-      role: 'assistant',
-      content: assistantContent,
-      cost: estimatedCost,
-      embedding: assistantEmbedding,
-      createdAt: new Date().toISOString(),
-    })
+    // 9. Store the assistant's response. The estimated cost rides along so a later cache hit
+    //    on this question can credit it to `totalSaved`.
+    if (isComplete) {
+      // Not `cachedEmbed`: a generated reply is unique text, so the lookup is a guaranteed
+      // miss and the write is a large row nothing will ever read.
+      const assistantEmbedding = await embed(assistantContent)
+      await tables.Message.put({
+        id: crypto.randomUUID(),
+        conversationId,
+        role: 'assistant',
+        content: assistantContent,
+        cost: estimatedCost,
+        embedding: assistantEmbedding,
+        createdAt: new Date().toISOString(),
+      })
+    }
 
     // 10. Update conversation timestamp
     await tables.Conversation.put({
@@ -246,6 +247,7 @@ export class Agent extends Resource {
           saved: 0,
         },
         vectorContext: { hit: false, count: 0, cached: false },
+        finishReason: result.finishReason,
       },
     }
   }
