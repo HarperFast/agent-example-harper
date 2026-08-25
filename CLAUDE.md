@@ -51,12 +51,12 @@ lib/embeddings.js            # Thin wrapper over `models.embed()`
 - `Stats` table has no TTL (cumulative savings persist indefinitely)
 
 ### Semantic Cache
-1. **Embedding cache (`EmbeddingCache`):** keyed by a SHA-256 digest of the normalized text (lowercased, punctuation stripped, whitespace collapsed) — a digest because Harper rejects a primary key over ~1978 bytes. Skips the embedding backend on exactly repeated text; it is not an answer cache.
+1. **Embedding cache (`EmbeddingCache`):** keyed by a SHA-256 digest of the text with case and whitespace normalized (punctuation is preserved — the key selects a vector, so it must preserve identity) — a digest because Harper rejects a primary key over ~1978 bytes. Skips the embedding backend on exactly repeated text; it is not an answer cache.
 2. **Answer cache — HNSW vector search:** Use Harper's native `conditions` search with `comparator: 'lt'` and `value: 0.15` (cosine distance). **Never scan a table and score it in JS** — the index does the filtering. `resources/Agent.js` does recompute cosine distance, but only over the ≤20 rows the index already returned, to rank them (HNSW iteration is not distance-ordered) and to re-check the bound; matches outside `lt` have been observed to survive it, which is worth confirming against harper core rather than leaving as app-side compensation.
 
 ### Models API access
 - `import { models } from 'harper'` — `models` is a process-wide singleton, exported by the `harper` package and also available as a bare global. It is the same object as `scope.models`, so a `handleApplication(scope)` plugin that stashes the Scope on `globalThis` is not needed.
-- `models.generate()` currently returns `{ content, finishReason }` only — no token usage — so `resources/Agent.js` estimates token counts from text length for the cost comparator.
+- `models.generate()` returns `usage` (`promptTokens` / `completionTokens`) passed through from the backend, but the field is optional — `resources/Agent.js` falls back to a length estimate and reports which it used as `meta.tokensAreMeasured`.
 
 ### Chat UI (resources/Chat.js)
 - Full HTML/CSS/JS served from a single template literal via `new Response(HTML, ...)`
@@ -109,5 +109,5 @@ curl http://localhost:9926/PublicStats/global
 1. **Template literal backslashes** — `\n` inside a JS template literal becomes a real newline. Use `\\n` in Chat.js script sections. Same for `\d`, `\s`, `\*` in regex patterns.
 2. **Resource class naming** — naming a class `Stats` when there's a `Stats` table shadows `tables.Stats`. Always use a different name (e.g. `PublicStats`).
 3. **`tables.Stats.get()` on empty DB** — returns `null`, not `{}`. Always provide a fallback: `?? { id: 'global', totalSaved: 0, cacheHits: 0 }`.
-4. **No token usage from `models.generate()`** — it returns `{ content, finishReason }` only. Token counts in `meta` are length-based estimates, not billed counts.
+4. **`models.generate().usage` is optional** — a backend that reports none leaves it undefined, so `meta.tokens` may be a length estimate. `meta.tokensAreMeasured` says which. Dollar amounts are always list-price Claude Sonnet, never the backend's real cost.
 5. **V2 auth** — `target.checkPermission = false` is the only way to allow unauthenticated access when `loadAsInstance = false`. V1 methods (`allowRead`) are silently ignored.

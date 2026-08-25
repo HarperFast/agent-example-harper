@@ -6,25 +6,24 @@ const SYSTEM_PROMPT = `You are a helpful, concise assistant. Answer only the use
 Do NOT summarize, repeat, or reference prior conversation context in your response — use it silently \
 as background knowledge only if it is directly relevant. Never recite or recap previous answers.`
 
-// The savings tracker compares against list-price Claude Sonnet 4.5. `models.generate()`
-// reports no token usage, so both the counts and the dollars below are estimates from text
-// length, not measurements — everything derived from them is labelled `est.` in the UI.
+// The savings tracker prices every generation at list-price Claude Sonnet 4.5 whichever
+// backend actually ran it, so the dollars are a comparator, never a bill.
 const CLAUDE_COST_INPUT_PER_TOKEN  = 3  / 1_000_000  // $3  / 1M input tokens
 const CLAUDE_COST_OUTPUT_PER_TOKEN = 15 / 1_000_000  // $15 / 1M output tokens
 
+// Fallback only: `models.generate()` passes the backend's token usage through, but the
+// field is optional and a backend that reports none leaves it undefined.
 const estimateTokens = (text) => Math.max(1, Math.ceil((text?.length ?? 0) / 4))
 
 const estimateClaudeCost = (promptTokens, completionTokens) =>
   promptTokens * CLAUDE_COST_INPUT_PER_TOKEN + completionTokens * CLAUDE_COST_OUTPUT_PER_TOKEN
 
-// `\p{L}\p{N}` rather than `\w`: `\w` is ASCII-only, so every message written in a
-// non-Latin script normalized to the empty string and shared one cache key with all the
-// others — returning another user's vector, which then got indexed as this message's.
-const normalize = (s) =>
-  s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, '').replace(/\s+/g, ' ').trim()
+// Case and whitespace only. This key selects a stored *vector*, so it has to preserve
+// identity: stripping punctuation collided `What is C++?` with `What is C#?`, handing the
+// second asker the first one's embedding to be indexed as their own message.
+const normalize = (s) => s.toLowerCase().replace(/\s+/g, ' ').trim()
 
-// Harper rejects a primary key over ~1978 bytes, and message text is unbounded, so the
-// cache is keyed by a digest of the normalized text rather than the text itself.
+// Harper rejects a primary key over ~1978 bytes and message text is unbounded.
 const cacheKey = (text) => createHash('sha256').update(normalize(text)).digest('base64url')
 
 // Cosine distance threshold for Harper's native HNSW vector search.
@@ -123,8 +122,9 @@ export class Agent extends Resource {
     }
     candidates.sort((a, b) => a.distance - b.distance)
 
-    // HNSW iteration is not distance-ordered, and matches outside the `lt` bound have been
-    // observed to survive it, so rank and re-check against the distance computed here.
+    // HNSW iteration is not distance-ordered, so rank here. The re-check is not redundant:
+    // core's cosine helper zero-pads to the longer vector rather than rejecting a length
+    // mismatch, so a row left from a different embedding backend can pass `lt`.
     const filtered = candidates.filter((c) => c.distance <= CACHE_DISTANCE_THRESHOLD)
 
     for (const { match } of filtered) {
@@ -201,8 +201,9 @@ export class Agent extends Resource {
     // the semantic cache: every near-miss question from here on would be served the partial
     // text as a complete answer, and `Message` rows have no repair path short of the TTL.
     const isComplete = result.finishReason === 'stop'
-    const promptTokens = estimateTokens(SYSTEM_PROMPT + message)
-    const completionTokens = estimateTokens(assistantContent)
+    const promptTokens = result.usage?.promptTokens ?? estimateTokens(SYSTEM_PROMPT + message)
+    const completionTokens = result.usage?.completionTokens ?? estimateTokens(assistantContent)
+    const tokensAreMeasured = result.usage?.promptTokens !== undefined
     const estimatedCost = estimateClaudeCost(promptTokens, completionTokens)
 
     // 9. Store the assistant's response. The estimated cost rides along so a later cache hit
@@ -248,6 +249,7 @@ export class Agent extends Resource {
         },
         vectorContext: { hit: false, count: 0, cached: false },
         finishReason: result.finishReason,
+        tokensAreMeasured,
       },
     }
   }

@@ -462,7 +462,7 @@ const HTML = /* html */ `<!DOCTYPE html>
         : 'No vector context — LLM knowledge only'
       div.innerHTML =
         '<span class="pill"><span class="label">Latency</span>' + latency + '</span>' +
-        '<span class="pill"><span class="label">Tokens</span>' + tok + ' (est.)</span>' +
+        '<span class="pill"><span class="label">Tokens</span>' + tok + (meta.tokensAreMeasured ? '' : ' (est.)') + '</span>' +
         '<span class="pill"><span class="label">Cost</span>' + usd + ' (est.)</span>' +
         '<span class="pill ' + vecClass + '"><span class="label">Vector</span>' + vecLabel + '</span>'
     }

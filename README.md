@@ -144,7 +144,7 @@ curl -X POST http://localhost:9926/Agent \
   -d '{"message": "What is Harper?"}'
 ```
 
-Response (`models.generate()` reports no token usage, so `tokens` and `cost` are length-based estimates of what the same call would have cost on Claude Sonnet — the comparator behind the savings tracker, not a bill):
+Response. `tokens` comes from the backend's reported usage when it reports any, and falls back to a length estimate otherwise — `meta.tokensAreMeasured` says which. `cost` is always what the same call would have cost at list-price Claude Sonnet, the comparator behind the savings tracker, never the backend's real cost:
 
 ```json
 {
@@ -154,7 +154,9 @@ Response (`models.generate()` reports no token usage, so `tokens` and `cost` are
     "latencyMs": 1842,
     "tokens": { "input": 312, "output": 148, "total": 460 },
     "cost": { "input": 0.000936, "output": 0.00222, "total": 0.003156, "saved": 0 },
-    "vectorContext": { "hit": false, "count": 0, "cached": false }
+    "vectorContext": { "hit": false, "count": 0, "cached": false },
+    "finishReason": "stop",
+    "tokensAreMeasured": true
   }
 }
 ```
