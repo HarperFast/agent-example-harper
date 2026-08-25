@@ -52,7 +52,7 @@ lib/embeddings.js            # Thin wrapper over `models.embed()`
 
 ### Semantic Cache (two layers)
 1. **Layer 1 — Exact match:** Normalize text (lowercase, strip punctuation, collapse whitespace) and compare against conversation history. No DB query needed.
-2. **Layer 2 — HNSW vector search:** Use Harper's native `conditions` search with `comparator: 'lt'` and `value: 0.15` (cosine distance). **Never do manual cosine similarity in JS** — always use Harper's native HNSW index for distance filtering.
+2. **Layer 2 — HNSW vector search:** Use Harper's native `conditions` search with `comparator: 'lt'` and `value: 0.15` (cosine distance). **Never scan a table and score it in JS** — the index does the filtering. `resources/Agent.js` does recompute cosine distance, but only over the ≤20 rows the index already returned, to rank them (HNSW iteration is not distance-ordered) and to re-check the bound; matches outside `lt` have been observed to survive it, which is worth confirming against harper core rather than leaving as app-side compensation.
 
 ### Vector Context (for LLM prompt)
 - Uses `sort: { attribute: 'embedding', target: userEmbedding }` with `limit: 10` — returns top 10 most similar messages

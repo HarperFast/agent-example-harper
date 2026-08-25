@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { models, Resource, tables } from 'harper'
 import { embed } from '../lib/embeddings.js'
 
@@ -5,24 +6,23 @@ const SYSTEM_PROMPT = `You are a helpful, concise assistant. Answer only the use
 Do NOT summarize, repeat, or reference prior conversation context in your response — use it silently \
 as background knowledge only if it is directly relevant. Never recite or recap previous answers.`
 
-// Hypothetical Claude Sonnet 4.5 pricing used to estimate what each generation
-// WOULD have cost if we'd called Anthropic instead of the local GPU. Real local
-// compute cost is roughly $0 (sunk-cost GPU); the dashboard shows what we're
-// saving by self-hosting + caching.
+// The savings tracker compares against list-price Claude Sonnet 4.5. `models.generate()`
+// reports no token usage, so both the counts and the dollars below are estimates from text
+// length, not measurements — everything derived from them is labelled `est.` in the UI.
 const CLAUDE_COST_INPUT_PER_TOKEN  = 3  / 1_000_000  // $3  / 1M input tokens
 const CLAUDE_COST_OUTPUT_PER_TOKEN = 15 / 1_000_000  // $15 / 1M output tokens
 
-// models.generate() returns only { content, finishReason } today — the
-// backend's token usage isn't surfaced to callers. Approximate with the
-// ~4-chars-per-token rule of thumb for English; close enough for a comparator.
 const estimateTokens = (text) => Math.max(1, Math.ceil((text?.length ?? 0) / 4))
 
 const estimateClaudeCost = (promptTokens, completionTokens) =>
   promptTokens * CLAUDE_COST_INPUT_PER_TOKEN + completionTokens * CLAUDE_COST_OUTPUT_PER_TOKEN
 
-// Normalize text for embedding cache key — lowercase, strip punctuation, collapse whitespace
 const normalize = (s) =>
   s.toLowerCase().replace(/[^\w\s]/g, '').replace(/\s+/g, ' ').trim()
+
+// Harper rejects a primary key over ~1978 bytes, and message text is unbounded, so the
+// cache is keyed by a digest of the normalized text rather than the text itself.
+const cacheKey = (text) => createHash('sha256').update(normalize(text)).digest('base64url')
 
 // Cosine distance threshold for Harper's native HNSW vector search.
 // Harper uses cosine *distance* (0 = identical, 2 = opposite). 0.15 ≈ cosine
@@ -31,9 +31,11 @@ const normalize = (s) =>
 // that the matched reply is reasonably on-topic.
 const CACHE_DISTANCE_THRESHOLD = 0.15
 
-// HNSW search returns matches that satisfy the threshold but doesn't guarantee
-// distance-ordered iteration. We compute distance ourselves and pick the closest.
+// Vectors of differing length are not comparable — that happens when the host's embedding
+// backend changes under stored vectors — so report maximum distance rather than silently
+// comparing a prefix.
 function cosineDistance(a, b) {
+  if (a.length !== b.length) return 2
   let dot = 0, na = 0, nb = 0
   for (let i = 0; i < a.length; i++) {
     dot += a[i] * b[i]
@@ -44,9 +46,9 @@ function cosineDistance(a, b) {
   return denom === 0 ? 1 : 1 - dot / denom
 }
 
-// Get or compute an embedding, using Harper as a cache to skip the model on repeated text.
+// Cache the embedding of repeated text so a rephrase-free repeat skips the backend call.
 async function cachedEmbed(text) {
-  const key = normalize(text)
+  const key = cacheKey(text)
   const cached = await tables.EmbeddingCache.get(key)
   if (cached?.embedding) return cached.embedding
   const embedding = await embed(text)
@@ -99,9 +101,6 @@ export class Agent extends Resource {
     const tStore = Date.now() - t3
 
     // 4. Semantic cache — Harper-native HNSW vector search with distance threshold.
-    //    HNSW search returns matches under the threshold but iteration order isn't
-    //    guaranteed to be distance-ascending, so we collect candidates, compute
-    //    cosine distance ourselves, and pick the closest valid one.
     const t4 = Date.now()
     let cachedReply = null
     const nearbyMsgs = tables.Message.search({
@@ -121,8 +120,8 @@ export class Agent extends Resource {
     }
     candidates.sort((a, b) => a.distance - b.distance)
 
-    // Harper's HNSW `lt` filter doesn't always cull matches outside the threshold,
-    // so we apply a hard check using the distance we computed ourselves.
+    // HNSW iteration is not distance-ordered, and matches outside the `lt` bound have been
+    // observed to survive it, so rank and re-check against the distance computed here.
     const filtered = candidates.filter((c) => c.distance <= CACHE_DISTANCE_THRESHOLD)
 
     for (const { match } of filtered) {
@@ -134,11 +133,10 @@ export class Agent extends Resource {
       for await (const m of matchHistory) matchConvMsgs.push(m)
       matchConvMsgs.sort((a, b) => a.createdAt.localeCompare(b.createdAt))
       const midx = matchConvMsgs.findIndex((m) => m.id === match.id)
-      // The matched message's reply must be the IMMEDIATELY following message.
-      // `.find()` would walk past any subsequent user-msgs (cache hits that didn't
-      // generate a reply) and pull an unrelated answer from much later in the
-      // conversation — e.g. matching "is soccer fun" but returning the assistant
-      // reply to a later "what is 2 plus 3" question in the same conversation.
+      if (midx === -1) continue
+      // Only the IMMEDIATELY following message is this question's answer: scanning forward
+      // would skip past later user messages that produced no reply of their own and return
+      // an answer to a different question.
       const next = matchConvMsgs[midx + 1]
       if (next?.role === 'assistant') {
         cachedReply = next
@@ -150,9 +148,8 @@ export class Agent extends Resource {
     const timing = { embedMs: tEmbed, convMs: tConv, storeMs: tStore, cacheSearchMs: tCache }
     console.log('[Agent] timing:', JSON.stringify(timing))
 
-    // Return the cached answer — zero LLM call. We credit the original message's
-    // estimated cost to `totalSaved` so the dashboard shows the running benefit
-    // of the semantic cache (and self-hosting more broadly).
+    // Cache hit: no generation call. Credit the matched message's estimated cost to the
+    // running `totalSaved` the dashboard shows.
     if (cachedReply) {
       let savedCost = 0
       try {
@@ -192,15 +189,28 @@ export class Agent extends Resource {
 
     const latencyMs = Date.now() - startTime
     const assistantContent = result.content?.trim() ?? ''
+    // An empty or truncated reply must not be persisted: the semantic cache would serve it
+    // to every near-miss question from here on, and `Message` rows have no repair path.
+    if (!assistantContent) {
+      const err = new Error(`Model returned no content (finishReason: ${result.finishReason})`)
+      err.statusCode = 502
+      throw err
+    }
+    if (result.finishReason === 'length') {
+      const err = new Error('Model response was truncated at maxTokens; not caching a partial answer')
+      err.statusCode = 502
+      throw err
+    }
     const promptTokens = estimateTokens(SYSTEM_PROMPT + message)
     const completionTokens = estimateTokens(assistantContent)
     const estimatedCost = estimateClaudeCost(promptTokens, completionTokens)
 
-    // 9. Store the assistant's response with its embedding. We persist the
-    //    *hypothetical* Claude cost so a future cache-hit on this same message
-    //    can credit that amount to `totalSaved`.
+    // 9. Store the assistant's response with its embedding. The estimated cost rides along
+    //    so a later cache hit on this question can credit it to `totalSaved`.
     const assistantMsgId = crypto.randomUUID()
-    const assistantEmbedding = await cachedEmbed(assistantContent)
+    // Not `cachedEmbed`: a generated reply is unique text, so the cache lookup is a
+    // guaranteed miss and the write is a large row nothing will ever read.
+    const assistantEmbedding = await embed(assistantContent)
     await tables.Message.put({
       id: assistantMsgId,
       conversationId,

@@ -66,10 +66,8 @@ void suite('agent-example-harper loads', (ctx: ContextWithHarper) => {
 		ok([200, 404].includes(res.status), `unexpected status ${res.status}`);
 	});
 
-	// Guards the `import { models } from 'harper'` path: the resource must reach the
-	// models layer rather than fail on a missing global. CI configures no backend, so
-	// the expected outcome is the models layer's own "no backend" error, not a
-	// ReferenceError or a read of `undefined`.
+	// Guards `import { models } from 'harper'`: with no backend configured the request must
+	// fail in the models layer, not on an undefined import.
 	void test('POST /Agent reaches the models layer', async () => {
 		const res = await authFetch(ctx, '/Agent', {
 			method: 'POST',
