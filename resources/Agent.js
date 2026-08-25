@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { models, Resource, tables } from 'harper'
+import { logger, models, Resource, tables } from 'harper'
 import { embed } from '../lib/embeddings.js'
 
 const SYSTEM_PROMPT = `You are a helpful, concise assistant. Answer only the user's current question. \
@@ -33,9 +33,8 @@ const cacheKey = (text) => createHash('sha256').update(normalize(text)).digest('
 // that the matched reply is reasonably on-topic.
 const CACHE_DISTANCE_THRESHOLD = 0.15
 
-// Vectors of differing length are not comparable — that happens when the host's embedding
-// backend changes under stored vectors — so report maximum distance rather than silently
-// comparing a prefix.
+// Unequal lengths mean the host's embedding backend changed under the stored vectors.
+// Report maximum distance rather than scoring a prefix.
 function cosineDistance(a, b) {
   if (a.length !== b.length) return 2
   let dot = 0, na = 0, nb = 0
@@ -48,7 +47,6 @@ function cosineDistance(a, b) {
   return denom === 0 ? 1 : 1 - dot / denom
 }
 
-// Cache the embedding of repeated text so a rephrase-free repeat skips the backend call.
 async function cachedEmbed(text) {
   const key = cacheKey(text)
   const cached = await tables.EmbeddingCache.get(key)
@@ -149,15 +147,11 @@ export class Agent extends Resource {
     const tCache = Date.now() - t4
 
     const timing = { embedMs: tEmbed, convMs: tConv, storeMs: tStore, cacheSearchMs: tCache }
-    console.log('[Agent] timing:', JSON.stringify(timing))
+    logger.debug('[Agent] timing:', timing)
 
-    // Cache hit: no generation call. Credit the matched message's estimated cost to the
-    // running `totalSaved` the dashboard shows.
     if (cachedReply) {
-      let savedCost = 0
+      const savedCost = cachedReply.cost ?? 0
       try {
-        const origMsg = await tables.Message.get(cachedReply.id)
-        savedCost = origMsg?.cost ?? 0
         const stats = await tables.Stats.get('global')
         await tables.Stats.put({
           id: 'global',
@@ -165,7 +159,9 @@ export class Agent extends Resource {
           cacheHits: ((stats?.cacheHits) ?? 0) + 1,
           updatedAt: new Date().toISOString(),
         })
-      } catch {}
+      } catch (err) {
+        logger.warn('[Agent] savings counter update failed', err)
+      }
       return {
         conversationId,
         message: { role: 'assistant', content: cachedReply.content },
@@ -198,20 +194,25 @@ export class Agent extends Resource {
       throw err
     }
     // A truncated or filtered answer is still worth returning, but persisting it would seed
-    // the semantic cache: every near-miss question from here on would be served the partial
-    // text as a complete answer, and `Message` rows have no repair path short of the TTL.
+    // the cache: every near-miss question thereafter is served the partial text as complete.
     const isComplete = result.finishReason === 'stop'
     const promptTokens = result.usage?.promptTokens ?? estimateTokens(SYSTEM_PROMPT + message)
     const completionTokens = result.usage?.completionTokens ?? estimateTokens(assistantContent)
     const tokensAreMeasured = result.usage?.promptTokens !== undefined
     const estimatedCost = estimateClaudeCost(promptTokens, completionTokens)
 
-    // 9. Store the assistant's response. The estimated cost rides along so a later cache hit
-    //    on this question can credit it to `totalSaved`.
+    // 9. Store the assistant's response. The cost rides along so a later cache hit on this
+    //    question can credit it to `totalSaved`.
     if (isComplete) {
-      // Not `cachedEmbed`: a generated reply is unique text, so the lookup is a guaranteed
-      // miss and the write is a large row nothing will ever read.
-      const assistantEmbedding = await embed(assistantContent)
+      // Not `cachedEmbed`: a generated reply is unique text, so the lookup always misses.
+      // A failure here must not discard an answer already paid for, so the row is stored
+      // unembedded; the candidate loop skips rows without an embedding.
+      let assistantEmbedding
+      try {
+        assistantEmbedding = await embed(assistantContent)
+      } catch (err) {
+        logger.warn('[Agent] reply embedding failed; storing message unindexed', err)
+      }
       await tables.Message.put({
         id: crypto.randomUUID(),
         conversationId,
