@@ -1,17 +1,16 @@
 # Harper Demo Agent
 
-A conversational AI agent with persistent semantic memory, a two-layer semantic cache, web search, cost tracking, and a browser chat UI — all running on [Harper](https://harper.fast) with Claude (via the Anthropic API or Google Cloud Vertex AI).
+A conversational AI agent with persistent semantic memory, a two-layer semantic cache, cost tracking, and a browser chat UI — all running on [Harper](https://harper.fast). Generation and embedding go through Harper's `models` API, so the app ships no LLM SDK and holds no provider credentials.
 
 Live demo: **[agent-example.stephen-demo-org.harperfabric.com/Chat](https://agent-example.stephen-demo-org.harperfabric.com/Chat)**
 
 ## What It Does
 
-- **Chat with Claude** via a REST endpoint (`POST /Agent`) or the built-in browser chat UI (`GET /Chat`)
-- **Semantic cache** — two-layer cache catches repeated and rephrased questions before they reach Claude, returning answers instantly at zero LLM cost
-- **Web search** — Anthropic's built-in server-side web search (`web_search_20250305`, up to 5 uses per turn); no external API key required
+- **Chat** via a REST endpoint (`POST /Agent`) or the built-in browser chat UI (`GET /Chat`)
+- **Semantic cache** — two-layer cache catches repeated and rephrased questions before they reach the model, returning answers instantly at zero LLM cost
 - **Persistent memory** — every message is embedded and stored in Harper; semantic recall surfaces relevant context from past conversations automatically
-- **Local embeddings** — `bge-small-en-v1.5` runs via `harper-fabric-embeddings` (llama.cpp wrapper), entirely in-process; no embedding API key or billing
-- **Per-response metadata** — every API response includes latency, token counts, cost breakdown, web searches used, and vector context stats
+- **Host-provided models** — `models.generate()` and `models.embed()` resolve to whatever backend the Harper host has configured (the shared inference process on Fabric GPU hosts; Ollama / OpenAI / Anthropic / Bedrock elsewhere). No SDK dependency, no API key in the app
+- **Per-response metadata** — every API response includes latency, token estimates, cost breakdown, and vector context stats
 - **Global savings tracker** — cache hits accumulate a running total of USD saved and hit count in a `Stats` table, displayed live in the chat sidebar
 - **Auto-generated REST APIs** — full CRUD on `Conversation`, `Message`, and `Stats` tables, generated from the GraphQL schema with zero route code
 
@@ -27,55 +26,52 @@ User Query
 │  1. Embed user message                                   │
 │     ┌─────────────────────┐                              │
 │     │   EmbeddingCache    │ ← normalized text → vector   │
-│     │   hit: ~1ms lookup  │   miss: SLM generates it,   │
-│     │   (skip SLM)        │   then stores for next time  │
+│     │   hit: ~1ms lookup  │   miss: models.embed(),      │
+│     │   (skip the model)  │   then stores for next time  │
 │     └─────────────────────┘                              │
-│     Local SLM: bge-small-en-v1.5 (llama.cpp, in-process)│
 │                                                          │
 │  2. Store user message + embedding                       │
-│  3. HNSW semantic cache check (cosine distance < 0.12)   │
+│  3. HNSW semantic cache check (cosine distance < 0.15)   │
 │       │                          │                       │
 │   Cache HIT                  Cache MISS                  │
 │       │                          │                       │
-│  Return $0.00           Call Claude ──────────────────────┼──► Anthropic API
-│  + saved $X                      │                       │    + Web Search
-│                          Embed response (via cache/SLM)  │◄──────────┘
-│                          Store in Harper                  │
+│  Return $0.00        models.generate() ───────────────────┼──► host-configured
+│  + saved $X                      │                       │    model backend
+│                          Embed response (cache/embed)    │◄──────────┘
+│                          Store in Harper                 │
 │                                                          │
 └──────────────────────────────────────────────────────────┘
 ```
 
-Every request is standalone. Ask once, pay for Claude. Ask again — or rephrase the same question — and Harper serves the cached answer instantly at $0. The embedding cache eliminates the SLM cost on repeated text (~2.3s on Fabric → ~1ms).
+Every request is standalone. Ask once, pay for the generation. Ask again — or rephrase the same question — and Harper serves the cached answer instantly at $0. The embedding cache eliminates the embedding round-trip on repeated text.
 
 ## How the Semantic Cache Works
 
-Before calling Claude, the agent searches Harper's HNSW vector index for semantically similar past questions:
+Before calling the model, the agent searches Harper's HNSW vector index for semantically similar past questions:
 
 ```javascript
 tables.Message.search({
   conditions: {
     attribute: 'embedding',
     comparator: 'lt',
-    value: 0.12,           // cosine distance < 0.12 ≡ cosine similarity ≥ 0.88
+    value: 0.15,           // cosine distance < 0.15 ≡ cosine similarity ≥ 0.85
     target: userEmbedding,
   },
-  limit: 10,
+  limit: 20,
 })
 ```
 
-Harper's HNSW index evaluates the distance threshold internally — no full table scan, no in-memory cosine math. When a match is found, the agent looks up the assistant reply that followed it and returns that directly. No Claude call, no tokens, no cost.
+Harper's HNSW index evaluates the distance threshold internally — no full table scan, no vector DB round-trip. The agent then ranks the returned candidates by cosine distance and takes the closest whose *immediately* following message is an assistant reply, and returns that directly. No generation call, no tokens, no cost.
 
 Cache hits return `cost.total: 0` and include a `cost.saved` field showing what the call would have cost. The saved amount is added to the global `Stats` record (`totalSaved`, `cacheHits`).
 
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) 22+
-- [Harper CLI](https://www.npmjs.com/package/harper): `npm install -g harper`
-- **One of:**
-  - [Anthropic API key](https://console.anthropic.com/) (direct API — default)
-  - [Google Cloud project](https://console.cloud.google.com/) with Vertex AI enabled (GCP Vertex AI)
+- [Harper](https://www.npmjs.com/package/harper) 5.2+: `npm install -g harper`
+- A Harper host with an embedding backend and a generative backend configured (see [Model Configuration](#model-configuration))
 
-No embedding API key needed — embeddings run in-process.
+No API key lives in this app — credentials, if the chosen backend needs any, belong to the host's model configuration.
 
 ## Quick Start
 
@@ -87,69 +83,48 @@ cd agent-example-harper
 # Install dependencies
 npm install
 
-# Configure environment
+# Configure environment (deploy credentials only)
 cp dot-env.example .env
-# Edit .env — see "LLM Provider Setup" below
 
 # Start the dev server
 npm run dev
 ```
 
-## LLM Provider Setup
+## Model Configuration
 
-This agent supports two LLM backends — the direct Anthropic API and Google Cloud Vertex AI. Set `LLM_PROVIDER` in your `.env` to choose which one to use.
+This app never names a model or holds a credential. `models.generate()` and `models.embed()`
+resolve the logical names `models.generative.default` and `models.embedding.default` from the
+**host's** configuration — the top-level `models:` block of `harperdb-config.yaml` at the
+instance root. Change the backend there and the app is unchanged.
 
-### Option A: Anthropic API (default)
-
-The simplest path. You just need an API key from [console.anthropic.com](https://console.anthropic.com/).
-
-```env
-LLM_PROVIDER=anthropic
-ANTHROPIC_API_KEY=sk-ant-...
+```yaml
+models:
+  embedding:
+    default:
+      backend: ollama
+      host: http://localhost:11434
+      model: nomic-embed-text
+  generative:
+    default:
+      backend: anthropic
+      model: claude-sonnet-4-5
+      apiKey: ${ANTHROPIC_API_KEY}
 ```
 
-Web search is included automatically via Anthropic's server-side `web_search_20250305` tool — no additional API keys required.
+Built-in backends: `ollama`, `openai`, `anthropic`, `bedrock`. Any other `backend` value is
+resolved as a module specifier and imported, so a custom backend needs no core change.
 
-### Option B: Google Cloud Vertex AI
+Two things worth knowing:
 
-Run Claude through your own GCP project. Useful for enterprise environments, org-level billing, data residency, and keeping everything inside Google Cloud.
+- **Keep credentials out of the YAML.** String leaves are env-expanded before they reach the
+  backend, so write `apiKey: ${ANTHROPIC_API_KEY}` rather than the literal key — Harper warns
+  at boot when it sees a literal in a credential field.
+- **A misconfigured entry is logged and skipped, not fatal.** Harper still boots; the failure
+  surfaces on first use as `ModelBackendNotFoundError: No backend registered for
+  'embedding.default'` from `POST /Agent`.
 
-**1. Enable the Vertex AI API** in your GCP project:
-
-```
-https://console.developers.google.com/apis/api/aiplatform.googleapis.com/overview?project=YOUR_PROJECT_ID
-```
-
-**2. Enable a Claude model** in the [Vertex AI Model Garden](https://console.cloud.google.com/vertex-ai/model-garden) — search for "Claude" and enable the model you want.
-
-**3. Request quota** — new projects start with 0 tokens/min. Go to [IAM & Admin → Quotas](https://console.cloud.google.com/iam-admin/quotas), filter for your Claude model, and request an increase.
-
-**4. Create a service account** with the **Vertex AI User** role, download the JSON key, and place it in the project root.
-
-**5. Configure `.env`:**
-
-```env
-LLM_PROVIDER=vertex
-VERTEX_PROJECT_ID=my-gcp-project
-VERTEX_REGION=us-east5
-GOOGLE_APPLICATION_CREDENTIALS=./your-service-account-key.json
-```
-
-> **Note:** Web search is not available on Vertex AI by default (requires an org policy change). The agent automatically disables it when running on Vertex.
-
-### Environment Variable Reference
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `LLM_PROVIDER` | No | `anthropic` | `anthropic` or `vertex` |
-| `ANTHROPIC_API_KEY` | When `anthropic` | — | Anthropic API key |
-| `VERTEX_PROJECT_ID` | When `vertex` | — | GCP project ID |
-| `VERTEX_REGION` | No | `global` | Vertex AI region (e.g. `us-east5`, `global`) |
-| `VERTEX_MODEL` | No | `claude-sonnet-4-6` | Vertex model ID |
-| `GOOGLE_APPLICATION_CREDENTIALS` | When `vertex` | — | Path to GCP service account JSON key |
-| `CLAUDE_MODEL` | No | `claude-sonnet-4-5-20250929` | Anthropic direct API model ID |
-
-> **First run:** On startup, `bge-small-en-v1.5` (~24 MB) is auto-downloaded into `./models/`. This only happens once.
+On Fabric GPU hosts the host-manager configures these entries for you against the shared
+inference process, and no local setup is needed.
 
 The server starts at `http://localhost:9926`. Open `http://localhost:9926/Chat` in your browser.
 
@@ -169,7 +144,7 @@ curl -X POST http://localhost:9926/Agent \
   -d '{"message": "What is Harper?"}'
 ```
 
-Response:
+Response (`models.generate()` reports no token usage, so `tokens` and `cost` are length-based estimates of what the same call would have cost on Claude Sonnet — the comparator behind the savings tracker, not a bill):
 
 ```json
 {
@@ -178,8 +153,7 @@ Response:
   "meta": {
     "latencyMs": 1842,
     "tokens": { "input": 312, "output": 148, "total": 460 },
-    "cost": { "input": 0.000936, "output": 0.00222, "search": 0, "total": 0.003156 },
-    "webSearches": 0,
+    "cost": { "input": 0.000936, "output": 0.00222, "total": 0.003156, "saved": 0 },
     "vectorContext": { "hit": false, "count": 0, "cached": false }
   }
 }
@@ -226,18 +200,16 @@ curl "http://localhost:9926/Message?conversationId=abc-123"
 ## Project Structure
 
 ```
-├── config.yaml              # Harper app configuration (6 lines)
+├── config.yaml              # Harper app configuration
 ├── schemas/
 │   └── schema.graphql       # Database schema (Conversation, Message, Stats + HNSW index)
 ├── resources/
-│   ├── Agent.js             # POST /Agent (agent loop + semantic cache + web search)
+│   ├── Agent.js             # POST /Agent (agent loop + semantic cache)
 │   │                        # GET  /PublicStats/:id (public stats endpoint)
 │   └── Chat.js              # GET  /Chat (full browser chat UI served as HTML)
 ├── lib/
-│   ├── config.js            # Environment variable helpers
-│   └── embeddings.js        # Local llama.cpp embeddings via harper-fabric-embeddings
-├── models/                  # Auto-downloaded GGUF model (gitignored)
-├── .env.example             # Environment template
+│   └── embeddings.js        # Thin wrapper over `models.embed()`
+├── dot-env.example          # Environment template (deploy credentials)
 └── package.json
 ```
 
@@ -297,7 +269,7 @@ Rolling restarts and replication are handled automatically.
 | Semantic cache | Redis + custom logic | Built in (native HNSW threshold filter) |
 | API server | Express / Fastify | Auto-generated from schema |
 | Chat UI server | Vite / Next.js | Resource returning `Response(html)` |
-| Embeddings | Voyage / OpenAI API | Local via `harper-fabric-embeddings` (24 MB, in-process) |
+| Model access | Per-provider SDK + key per app | `models.embed()` / `models.generate()`, backend configured on the host |
 | Deployment | Docker + K8s + cloud | `harper deploy .` |
 
 **Key insights from building this:**
@@ -306,7 +278,7 @@ Rolling restarts and replication are handled automatically.
 - **Everything in one process means no network hops.** Database, vector index, cache, API, and agent code share the same runtime. No Redis round-trip, no vector DB round-trip.
 - **The schema is the only config you need.** One `@indexed(type: "HNSW", distance: "cosine")` directive creates the vector index. One `@export` generates the CRUD API. One `@indexed` on `conversationId` creates the secondary index.
 - **Resources can return anything.** A `Resource` subclass can return a `Response` with any content type — JSON, HTML, plain text. The chat UI lives in the same project and deploy as the agent logic.
-- **Local embeddings eliminate a cost center.** `bge-small-en-v1.5` runs in-process via llama.cpp. No per-embedding billing, no embedding service SLA to worry about.
+- **The model backend is host configuration, not app code.** `import { models } from 'harper'` gives a resource the process-wide models singleton — the same object as `scope.models`, so no `handleApplication(scope)` shim is needed. Swapping Ollama for Bedrock is a YAML edit on the host; this app does not change.
 
 ## License
 

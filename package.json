@@ -1,10 +1,10 @@
 {
   "name": "agent-example-harper",
   "version": "1.0.0",
-  "description": "A conversational AI agent with persistent memory, built on Harper with scope.models",
+  "description": "A conversational AI agent with persistent memory, built on Harper with the harper models API",
   "type": "module",
   "engines": {
-    "harper": "^5.0"
+    "harper": "^5.2"
   },
   "scripts": {
     "start": "npx -y dotenv-cli -e .env -o -- harper run .",

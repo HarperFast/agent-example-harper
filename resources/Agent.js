@@ -1,4 +1,4 @@
-import { Resource, tables } from 'harper'
+import { models, Resource, tables } from 'harper'
 import { embed } from '../lib/embeddings.js'
 
 const SYSTEM_PROMPT = `You are a helpful, concise assistant. Answer only the user's current question. \
@@ -12,7 +12,7 @@ as background knowledge only if it is directly relevant. Never recite or recap p
 const CLAUDE_COST_INPUT_PER_TOKEN  = 3  / 1_000_000  // $3  / 1M input tokens
 const CLAUDE_COST_OUTPUT_PER_TOKEN = 15 / 1_000_000  // $15 / 1M output tokens
 
-// scope.models.generate() returns only { content, finishReason } today — the
+// models.generate() returns only { content, finishReason } today — the
 // backend's token usage isn't surfaced to callers. Approximate with the
 // ~4-chars-per-token rule of thumb for English; close enough for a comparator.
 const estimateTokens = (text) => Math.max(1, Math.ceil((text?.length ?? 0) / 4))
@@ -179,15 +179,10 @@ export class Agent extends Resource {
       }
     }
 
-    // 5. Generate via scope.models.generate() — routes to whatever backend the host
-    //    has configured for `models.generative.default` (vLLM on Fabric GPU hosts,
-    //    Ollama / OpenAI / Anthropic on other deployments).
-    const scope = globalThis.harperScope
-    if (!scope) {
-      throw new Error('Harper scope not yet captured — modelCapture plugin must run before first generate call')
-    }
-
-    const result = await scope.models.generate(
+    // 5. Generate via models.generate() — routes to whatever backend the host
+    //    has configured for `models.generative.default` (the shared inference process
+    //    on Fabric GPU hosts, Ollama / OpenAI / Anthropic / Bedrock elsewhere).
+    const result = await models.generate(
       {
         messages: [{ role: 'user', content: message }],
         system: SYSTEM_PROMPT,

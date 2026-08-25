@@ -1,14 +1,7 @@
-#MUST USE ANTHROPIC OR GOOGLE VERTEX AI
-
-# Anthropic (Optional)
-ANTHROPIC_API_KEY=sk-ant-your-key-here
-CLAUDE_MODEL=claude-sonnet-4-6
-
-#Google Vertex AI (optional)
-#LLM_PROVIDER=vertex
-#VERTEX_PROJECT_ID=your-gcp-project
-#VERTEX_REGION=global
-
+# The agent holds no model credentials. Generation and embedding go through
+# Harper's `models` API, which resolves `models.generative.default` and
+# `models.embedding.default` from the HOST's configuration (the `models:` block
+# of harperdb-config.yaml, or the equivalent env vars) — not from this file.
 
 # Harper Fabric deployment (optional, only needed for deploy)
 # CLI_TARGET=https://your-instance.your-org.harperfabric.com:9925/
